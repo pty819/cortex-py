@@ -100,7 +100,7 @@ function buildGraph() {
         border: shade(colorFor(e.entity_type), -20),
         highlight: { background: colorFor(e.entity_type) },
       },
-      font: { color: '#ffffff' },
+      font: { color: '#1f2937', strokeWidth: 4, strokeColor: '#ffffff', size: 14, face: 'system-ui, sans-serif' },
       title: `${e.canonical_name} (${e.entity_type})\n${e.description || ''}`,
       shape: 'dot',
       size: 18,
