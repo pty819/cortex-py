@@ -183,6 +183,36 @@ def _guess_vocab(predicate: str) -> str:
     return predicate  # 无词表则原样(coerce 返回 raw)
 
 
+def _aggregate_belief_for_scope(scope: str) -> int:
+    """全 scope belief 聚合:每个有 live facts 的 subject,若无 belief 则建一个。返回新建数。"""
+    n = 0
+    with session_scope() as conn:
+        rows = conn.execute(text("""
+            SELECT subject_id::text, count(*) AS c, min(valid_from)::text AS vf
+            FROM facts WHERE scope=:s AND valid_to IS NULL AND recorded_to IS NULL
+            GROUP BY subject_id HAVING count(*) >= 2
+        """), {"s": scope}).fetchall()
+        for r in rows:
+            subj_id, cnt, vf = r[0], r[1], r[2]
+            existing = conn.execute(text("""
+                SELECT belief_id FROM beliefs WHERE scope=:s AND about_entity_id=CAST(:a AS uuid)
+                AND valid_to IS NULL AND recorded_to IS NULL LIMIT 1"""), {"s": scope, "a": subj_id}).fetchone()
+            if existing:
+                continue
+            ent = conn.execute(text("SELECT canonical_name FROM entities WHERE entity_id=CAST(:e AS uuid)"),
+                               {"e": subj_id}).fetchone()
+            name = ent.canonical_name if ent else subj_id
+            fids = [x[0] for x in conn.execute(text(
+                "SELECT fact_id::text FROM facts WHERE scope=:s AND subject_id=CAST(:a AS uuid) AND valid_to IS NULL AND recorded_to IS NULL"),
+                {"s": scope, "a": subj_id}).fetchall()]
+            conn.execute(text("""INSERT INTO beliefs (scope, about_entity_id, stance, claim, confidence, supports, valid_from)
+                VALUES (:s,CAST(:a AS uuid),'likely_true',:claim,0.7,CAST(:sup AS uuid[]),CAST(:vf AS timestamptz))"""),
+                {"s": scope, "a": subj_id, "claim": f"{name} is associated with {cnt} observed facts",
+                 "sup": "{" + ",".join(fids) + "}", "vf": vf or "now()"})
+            n += 1
+    return n
+
+
 def _aggregate_belief(conn, scope: str, ent_map: Dict[str, str], fact_ids: List[str],
                       valid_from: str, model: str) -> None:
     by_subj: Dict[str, List[str]] = {}

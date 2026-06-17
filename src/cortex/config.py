@@ -91,6 +91,17 @@ class RetrievalCfg(BaseModel):
     rrf_k: float = 60.0
     graph_weight: float = 0.20
     graph_max_hops: int = 2
+    advanced: "AdvancedRetrievalCfg" = Field(default_factory=lambda: AdvancedRetrievalCfg())
+
+
+class AdvancedRetrievalCfg(BaseModel):
+    hyde_enabled: bool = False
+    hyde_passages: int = 1
+    multihop_enabled: bool = False
+    multihop_count: int = 4
+    salience_weight: float = 0.0
+    entity_vector_seed: bool = False
+    question_routing: bool = False   # 规则版 single/multi → top_k 40/160
 
 
 class LinkThresholds(BaseModel):

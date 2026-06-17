@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -91,6 +92,74 @@ def _chan_graph(conn, scope: str, view: str, q_emb: List[float], max_hops: int, 
     return [r[0] for r in conn.execute(text(sql), p).fetchall()]
 
 
+def _expand_synonyms(conn, scope: str, query: str) -> List[str]:
+    """synonym 通道:用 synonyms 表把 query 词扩展成同义词集,做 tsvector 查询。"""
+    words = re.findall(r"\w+", query.lower())
+    terms = set(words)
+    for w in words:
+        rows = conn.execute(text("""
+            SELECT term, aliases FROM synonyms WHERE scope=:s AND (term=:w OR :w = ANY(aliases))
+        """), {"s": scope, "w": w}).fetchall()
+        for r in rows:
+            terms.add(r[0]); terms.update(r[1] or [])
+    if terms == set(words):
+        return []
+    expanded = " ".join(sorted(terms))
+    rows = conn.execute(text("""
+        SELECT fact_id::text FROM facts
+        WHERE scope=:s AND valid_to IS NULL AND recorded_to IS NULL
+          AND to_tsvector('english', coalesce(predicate,'')||' '||coalesce(object_value->>'value',''))
+              @@ plainto_tsquery(:q) LIMIT :k
+    """), {"s": scope, "q": expanded, "k": 40}).fetchall()
+    return [r[0] for r in rows]
+
+
+def _chan_entity_name(conn, scope: str, view: str, query: str, top_k: int) -> List[str]:
+    """entity-name 通道:精确(canonical_name/alias)+ 模糊(pg_trgm)命中实体→其 facts。"""
+    frag, p = _scope_filter(scope, view)
+    p["k"] = top_k
+    names = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b", query)
+    if not names:
+        names = [w for w in re.findall(r"\w+", query) if len(w) > 3][:5]
+    if not names:
+        return []
+    eids: list = []
+    for nm in names:
+        rows = conn.execute(text(f"""
+            SELECT entity_id::text FROM entities
+            WHERE {frag} AND merged_into IS NULL
+              AND (canonical_name ILIKE :nm
+                   OR EXISTS (SELECT 1 FROM entity_aliases a WHERE a.entity_id=entities.entity_id AND a.alias ILIKE :nm)
+                   OR similarity(canonical_name, :nm) > 0.3)
+            LIMIT 5
+        """), {**p, "nm": f"%{nm}%"}).fetchall()
+        eids.extend(r[0] for r in rows)
+    eids = list(dict.fromkeys(eids))
+    if not eids:
+        return []
+    eid_arr = "{" + ",".join(eids) + "}"
+    rows = conn.execute(text(f"""
+        SELECT DISTINCT fact_id::text FROM facts
+        WHERE {frag} AND valid_to IS NULL AND recorded_to IS NULL
+          AND (subject_id = ANY(CAST(:eids AS uuid[])) OR object_entity_id = ANY(CAST(:eids AS uuid[])))
+        LIMIT :k
+    """), {**p, "eids": eid_arr}).fetchall()
+    return [r[0] for r in rows]
+
+
+def _chan_temporal_decay(conn, scope: str, view: str, top_k: int, decay_days: int = 30) -> List[str]:
+    """temporal-decay 通道:近因窗内 facts,按时间衰减(越新越靠前)。"""
+    frag, p = _scope_filter(scope, view)
+    p["k"] = top_k; p["d"] = decay_days
+    sql = f"""
+        SELECT fact_id::text FROM facts
+        WHERE {frag} AND valid_to IS NULL AND recorded_to IS NULL
+          AND valid_from >= now() - make_interval(secs => :d * 86400)
+        ORDER BY valid_from DESC LIMIT :k
+    """
+    return [r[0] for r in conn.execute(text(sql), p).fetchall()]
+
+
 def _rrf(rank_lists: List[List[str]], k: float = 60.0) -> Dict[str, float]:
     scores: Dict[str, float] = {}
     for lst in rank_lists:
@@ -100,10 +169,29 @@ def _rrf(rank_lists: List[List[str]], k: float = 60.0) -> Dict[str, float]:
 
 
 # ── 主入口 ──────────────────────────────────────────────────────────────────
+def _question_type(query: str) -> str:
+    """规则版路由:有多 session 信号(时间词/多实体/who what when 交叉)→ multi,否则 single。"""
+    multi_signals = sum(1 for w in ("last", "previous", "earlier", "before", "yesterday", "history") if w in query.lower())
+    if multi_signals >= 1 or query.lower().count(" ") >= 8:
+        return "multi-session"
+    return "single-session"
+
+
 def recall(*, scope: str, query: Optional[str] = None, view: str = "local",
            top_k: Optional[int] = None, as_of: Optional[str] = None,
-           valid_during: Optional[Tuple[str, str]] = None) -> Dict[str, Any]:
+           valid_during: Optional[Tuple[str, str]] = None,
+           recorded_during: Optional[Tuple[str, str]] = None,
+           include_superseded: bool = False,
+           budgets: Optional[Dict[str, Any]] = None,
+           citation_mode: str = "inline_with_markers",
+           exclude_content: bool = False) -> Dict[str, Any]:
     cfg = load_config()
+    adv = cfg.retrieval.advanced
+    # question-type routing → top_k
+    if adv.question_routing and query:
+        qtype = _question_type(query)
+        if top_k is None:
+            top_k = 160 if qtype == "multi-session" else 40
     top_k = top_k or cfg.retrieval.top_k
     t_start = time.time()
     t = {"plan": 0.0, "fetch": 0.0, "fuse": 0.0, "rerank": 0.0, "pack": 0.0}
@@ -116,17 +204,64 @@ def recall(*, scope: str, query: Optional[str] = None, view: str = "local",
 
         t0 = time.time()
         q_emb = services.embed_one(query)
+        # ── 高级阶段:生成额外 query 向量 ──
+        extra_embs: List[List[float]] = []
+        if adv.hyde_enabled and services.llm_configured("synthesis"):
+            try:
+                for _ in range(adv.hyde_passages):
+                    raw = services.llm_chat("synthesis",
+                        "写一段假设性回答(假设记忆里有答案),纯文本无前缀。",
+                        query)
+                    hypo = services.strip_think(raw)[:500]
+                    extra_embs.append(services.embed_one(hypo))
+            except Exception:  # noqa: BLE001
+                pass
+        if adv.entity_vector_seed:
+            # query 实体名 → 其 entity embedding 作额外向量
+            for nm in re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b", query)[:5]:
+                row = conn.execute(text(
+                    "SELECT embedding FROM entities WHERE scope=:s AND merged_into IS NULL "
+                    "AND lower(canonical_name)=lower(:n) AND embedding IS NOT NULL LIMIT 1"),
+                    {"s": scope, "n": nm}).fetchone()
+                if row and row[0]:
+                    extra_embs.append(list(row[0]))
         t["plan"] = (time.time() - t0) * 1000
 
         t0 = time.time()
         c_vec = _chan_vector(conn, scope, view, q_emb, top_k)
+        # 多 query 向量:并集(每个 extra 向量各召回,并入 c_vec)
+        for e in extra_embs:
+            c_vec = list(dict.fromkeys(c_vec + _chan_vector(conn, scope, view, e, top_k)))
         c_bm25 = _chan_bm25(conn, scope, view, query, top_k)
         c_graph = _chan_graph(conn, scope, view, q_emb, cfg.retrieval.graph_max_hops, top_k)
+        c_ent = _chan_entity_name(conn, scope, view, query, top_k)
+        c_syn = _expand_synonyms(conn, scope, query)
+        c_tmp = _chan_temporal_decay(conn, scope, view, top_k)
+        # multihop:LLM 生成后续查询,各自 bm25 召回并入
+        if adv.multihop_enabled and services.llm_configured("synthesis"):
+            try:
+                import json as _j
+                raw = services.llm_chat("synthesis",
+                    "把用户问题拆成 N 个后续检索子问题,输出 JSON {queries:[...]}。",
+                    _j.dumps({"query": query, "n": adv.multihop_count}))
+                subs = services.parse_llm_json(raw)
+                for sq in (subs.get("queries") or [])[:adv.multihop_count]:
+                    c_bm25 = list(dict.fromkeys(c_bm25 + _chan_bm25(conn, scope, view, sq, top_k)))
+            except Exception:  # noqa: BLE001
+                pass
         t["fetch"] = (time.time() - t0) * 1000
-        ch_counts = {"vector": len(c_vec), "bm25": len(c_bm25), "graph": len(c_graph)}
+        ch_counts = {"vector": len(c_vec), "bm25": len(c_bm25), "graph": len(c_graph),
+                     "entity_name": len(c_ent), "synonym": len(c_syn), "temporal": len(c_tmp)}
 
         t0 = time.time()
-        scores = _rrf([c_vec, c_bm25, c_graph], cfg.retrieval.rrf_k)
+        scores = _rrf([c_vec, c_bm25, c_graph, c_ent, c_syn, c_tmp], cfg.retrieval.rrf_k)
+        # salience:用 events.access_count 作 prior 加权到分数
+        if adv.salience_weight > 0 and scores:
+            for fid in list(scores.keys()):
+                ac = conn.execute(text("""SELECT coalesce(max(e.access_count),0) FROM events e
+                    WHERE e.event_id = ANY((SELECT supports FROM facts WHERE fact_id=CAST(:f AS uuid)))"""),
+                    {"f": fid}).scalar() or 0
+                scores[fid] += adv.salience_weight * (ac / 10.0)
         ranked = sorted(scores, key=lambda fid: scores[fid], reverse=True)[: top_k]
         t["fuse"] = (time.time() - t0) * 1000
 
@@ -171,7 +306,10 @@ def recall(*, scope: str, query: Optional[str] = None, view: str = "local",
         t["rerank"] = (time.time() - t0) * 1000
 
         t0 = time.time()
-        pack = _assemble_pack(conn, scope, view, query, reranked_rows, t, ch_counts)
+        pack = _assemble_pack(conn, scope, view, query, reranked_rows, t, ch_counts,
+                              budgets=budgets, citation_mode=citation_mode,
+                              exclude_content=exclude_content, recorded_during=recorded_during,
+                              include_superseded=include_superseded)
         t["pack"] = (time.time() - t0) * 1000
         return pack
 
@@ -192,7 +330,13 @@ def _fact_to_out(r) -> Dict[str, Any]:
             "valid_from": r.valid_from, "valid_to": r.valid_to, "supports": []}
 
 
-def _assemble_pack(conn, scope, view, query, fact_rows, t, ch_counts) -> Dict[str, Any]:
+def _assemble_pack(conn, scope, view, query, fact_rows, t, ch_counts,
+                   budgets=None, citation_mode="inline_with_markers",
+                   exclude_content=False, recorded_during=None, include_superseded=False) -> Dict[str, Any]:
+    # budgets.per_layer_limits 硬上限裁剪
+    per_layer = (budgets or {}).get("per_layer_limits") or {}
+    if per_layer.get("facts"):
+        fact_rows = fact_rows[: per_layer["facts"]]
     fact_ids = [r.fact_id for r in fact_rows]
     subj_ids = list({r.subject_id for r in fact_rows})
     # beliefs about these subjects
@@ -205,6 +349,8 @@ def _assemble_pack(conn, scope, view, query, fact_rows, t, ch_counts) -> Dict[st
             WHERE b.valid_to IS NULL AND b.recorded_to IS NULL AND b.about_entity_id = ANY(CAST(:a AS uuid[]))
             LIMIT 10
         """), {"a": "{" + ",".join(subj_ids) + "}"}).fetchall()
+        if per_layer.get("beliefs"):
+            brows = brows[: per_layer["beliefs"]]
         beliefs = [{"belief_id": b.belief_id, "about": {"id": b.about_entity_id, "name": b.canonical_name},
                     "stance": b.stance, "claim": b.claim, "confidence": b.confidence,
                     "supports": [s for s in (b.supports or [])]} for b in brows]
@@ -222,10 +368,36 @@ def _assemble_pack(conn, scope, view, query, fact_rows, t, ch_counts) -> Dict[st
                    "observed_at": ev.observed_at, "excluded_from_recall": False} for ev in evrows]
 
     facts_out = [_fact_to_out(r) for r in fact_rows]
-    # context_block:有 key 走 synthesis LLM,否则规则拼
-    cb = _context_block(query, facts_out, beliefs)
+    # exclude_content: 去掉大文本字段
+    if exclude_content:
+        for ev in events:
+            ev["content"] = {}
+        for f in facts_out:
+            f.pop("supports", None)
+    # max_tokens knapsack: 估算 token(~4 字符/token),裁到预算(events 优先裁)
+    max_tokens = (budgets or {}).get("max_tokens")
+    if max_tokens:
+        def _est(obj):
+            return len(json.dumps(obj, ensure_ascii=False, default=str)) // 4
+        while events and _est({"events": events, "facts": facts_out, "beliefs": beliefs}) > max_tokens:
+            events.pop()
+        while len(facts_out) > 1 and _est({"events": events, "facts": facts_out, "beliefs": beliefs}) > max_tokens:
+            facts_out.pop()
+    # context_block
+    cb = _context_block(query, facts_out, beliefs, citation_mode)
 
     pack_id = "pack_" + uuid.uuid4().hex[:24]
+    # citations 按 citation_mode
+    if citation_mode == "none":
+        citations = {}
+        cb = "" if citation_mode == "none" else cb
+    elif citation_mode == "structured_only":
+        citations = {f"[{i+1}]": {"layer": "fact", "id": f["fact_id"]}
+                     for i, f in enumerate(facts_out)}
+        cb = ""
+    else:  # inline_with_markers / block_at_end
+        citations = {f"[{i+1}]": {"layer": "fact", "id": f["fact_id"]}
+                     for i, f in enumerate(facts_out)}
     pack = {
         "pack_id": pack_id, "scope": scope, "view": view,
         "layers": {"events": events, "facts": facts_out, "beliefs": beliefs},
@@ -233,15 +405,14 @@ def _assemble_pack(conn, scope, view, query, fact_rows, t, ch_counts) -> Dict[st
         "provenance": {"trail": [{"step": "fetch", "kept": ch_counts},
                                  {"step": "fuse_rrf", "kept": len(facts_out)},
                                  {"step": "rerank", "kept": len(facts_out)}],
-                       "citations": {f"[{i+1}]": {"layer": "fact", "id": f["fact_id"]}
-                                     for i, f in enumerate(facts_out)}},
+                       "citations": citations},
         "diagnostics": {"time_ms": t, "channels": ch_counts},
     }
     _cache_pack(conn, pack)
     return pack
 
 
-def _context_block(query, facts, beliefs) -> str:
+def _context_block(query, facts, beliefs, citation_mode="inline_with_markers") -> str:
     if not facts:
         return "(无相关记忆)"
     if services.llm_configured("synthesis"):

@@ -286,6 +286,34 @@ CREATE TABLE IF NOT EXISTS temporal_phrases (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- synonyms:同义词扩展(检索 synonym 通道;predicate/value 同义)
+CREATE TABLE IF NOT EXISTS synonyms (
+    synonym_id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    scope       TEXT NOT NULL,
+    term        TEXT NOT NULL,         -- 规范词,如 own
+    aliases     TEXT[] NOT NULL DEFAULT '{}',  -- 同义 possess/has/owns
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (scope, term)
+);
+CREATE INDEX IF NOT EXISTS idx_synonyms_scope_term ON cortex.synonyms (scope, term);
+CREATE INDEX IF NOT EXISTS idx_synonyms_aliases ON cortex.synonyms USING gin (aliases);
+
+-- concepts: Understanding 层(LLM 概念合成,per topic;related 图)
+CREATE TABLE IF NOT EXISTS concepts (
+    concept_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    scope        TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    topic        TEXT,
+    version      INT NOT NULL DEFAULT 1,
+    summary      TEXT,
+    supports     UUID[] NOT NULL DEFAULT '{}',   -- [fact_id / belief_id / episode_id]
+    related      JSONB NOT NULL DEFAULT '[]',    -- [{concept_id, relation}]
+    confidence   FLOAT NOT NULL DEFAULT 0.5 CHECK (confidence >= 0 AND confidence <= 1),
+    valid_from   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_concepts_scope_topic ON cortex.concepts (scope, topic);
+
 -- resolve 视图(03 决策 5:merged_into 软引用)
 CREATE OR REPLACE VIEW cortex.entities_resolved AS
     SELECT entity_id, COALESCE(merged_into, entity_id) AS resolved_id,

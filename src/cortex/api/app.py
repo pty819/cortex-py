@@ -46,7 +46,7 @@ def health():
 
 # ── experience (唯一写)──────────────────────────────────────────────────────
 @app.post("/v1/experience", response_model=schemas.ExperienceResponse)
-def experience(body: schemas.ExperienceRequest, actor: str = Depends(auth)):
+def experience(body: schemas.ExperienceRequest, wait: str = "", actor: str = Depends(auth)):
     content = body.content.model_dump(exclude_none=True)
     context = body.context.model_dump(exclude_none=True)
     try:
@@ -58,7 +58,20 @@ def experience(body: schemas.ExperienceRequest, actor: str = Depends(auth)):
         raise HTTPException(409, str(e))
     # enqueue 抽取 job(写路径无 LLM,只入队)
     enqueue_job(job_type="extract", scope=body.scope, event_id=eid, priority=0)
-    return schemas.ExperienceResponse(event_id=eid, wal_offset=offset, status="captured",
+    status = "captured"
+    stages: list = []
+    elapsed_ms: dict = {}
+    if wait in ("captured", "indexed", "consolidated"):
+        from ..core import wait_for_stage
+        timeout = 30.0 if wait != "consolidated" else 45.0
+        res = wait_for_stage(eid, wait, timeout=timeout)
+        if res["reached"]:
+            status = wait
+            stages = res.get("stages_completed", [])
+            elapsed_ms = {"wait_ms": res.get("elapsed_ms", 0)}
+        else:
+            status = "captured"  # 超时降级 async
+    return schemas.ExperienceResponse(event_id=eid, wal_offset=offset, status=status,
                                       lifecycle_stream=f"/v1/lifecycle/stream?event_id={eid}")
 
 
@@ -108,15 +121,25 @@ def list_entities(scope: str, q: str = Query(None), limit: int = 100, actor: str
 
 @app.get("/v1/facts")
 def list_facts(scope: str, subject: str = Query(None), predicate: str = Query(None),
+               as_of: str = Query(None), include_superseded: bool = Query(False),
                limit: int = 100, actor: str = Depends(auth)):
+    """列出 facts。as_of 裁剪双轴;include_superseded=true 返回历史超替版本(recorded_to<=as_of)。"""
     sql = """SELECT f.fact_id::text, f.predicate, f.object_type, f.object_value,
                     o.canonical_name AS oname, s.canonical_name AS sname,
                     s.entity_id::text AS sid, o.entity_id::text AS oid,
                     f.confidence, f.valid_from::text, f.valid_to::text
              FROM facts f JOIN entities s ON s.entity_id=f.subject_id
              LEFT JOIN entities o ON o.entity_id=f.object_entity_id
-             WHERE f.scope=:s AND f.valid_to IS NULL AND f.recorded_to IS NULL"""
+             WHERE f.scope=:s"""
     p: dict = {"s": scope, "lim": limit}
+    if not include_superseded:
+        sql += " AND f.recorded_to IS NULL"
+    if as_of:
+        if include_superseded:
+            sql += " AND f.recorded_from <= CAST(:ao AS timestamptz)"
+        else:
+            sql += " AND f.valid_from <= CAST(:ao AS timestamptz) AND (f.valid_to IS NULL OR CAST(:ao AS timestamptz) < f.valid_to)"
+        p["ao"] = as_of
     if subject:
         sql += " AND f.subject_id=CAST(:sub AS uuid)"; p["sub"] = subject
     if predicate:
@@ -160,6 +183,67 @@ def list_beliefs(scope: str, about: str = Query(None), actor: str = Depends(auth
                            about={"id": r[4], "name": r[5]}, supports=list(r[6] or [])) for r in rows]}
 
 
+@app.get("/v1/beliefs/why")
+def beliefs_why(belief_id: str, actor: str = Depends(auth)):
+    """遍历 belief → facts → events 支持图,渲染 narrative。"""
+    with session_scope() as c:
+        b = c.execute(text("""SELECT belief_id::text, stance, claim, confidence, about_entity_id::text,
+            e.canonical_name, supports::text[] FROM beliefs b JOIN entities e ON e.entity_id=b.about_entity_id
+            WHERE b.belief_id=CAST(:id AS uuid)"""), {"id": belief_id}).fetchone()
+        if not b:
+            raise HTTPException(404, "belief not found")
+        belief = dict(belief_id=b[0], stance=b[1], claim=b[2], confidence=b[3],
+                      about={"id": b[4], "name": b[5]}, supports=list(b[6] or []))
+        nodes, edges = [], []
+        nodes.append({"id": belief["belief_id"], "type": "belief", "weight": belief["confidence"],
+                      "summary": belief["claim"]})
+        # 取 supporting facts
+        fact_ids = belief["supports"]
+        facts = []
+        if fact_ids:
+            frows = c.execute(text("""SELECT f.fact_id::text, f.predicate, f.object_value->>'value',
+                f.confidence, f.supports::text[], s.canonical_name FROM facts f
+                JOIN entities s ON s.entity_id=f.subject_id WHERE f.fact_id = ANY(CAST(:ids AS uuid[]))"""),
+                {"ids": "{" + ",".join(fact_ids) + "}"}).fetchall()
+            for fr in frows:
+                fid = fr[0]
+                facts.append(fid)
+                nodes.append({"id": fid, "type": "fact", "weight": fr[3], "summary": f"{fr[5]} {fr[1]} {fr[2] or ''}"})
+                edges.append({"from": belief["belief_id"], "to": fid, "relation": "supported_by"})
+                # fact → supporting events
+                for eid in (fr[4] or []):
+                    ev = c.execute(text("SELECT content->>'text' FROM events WHERE event_id=CAST(:e AS uuid)"),
+                                   {"e": eid}).fetchone()
+                    if ev:
+                        nodes.append({"id": eid, "type": "event", "weight": 1.0, "summary": (ev[0] or "")[:120]})
+                        edges.append({"from": fid, "to": eid, "relation": "extracted_from"})
+    # narrative
+    narrative, nmodel = "", "mock"
+    if services.llm_configured("synthesis"):
+        try:
+            import json as _j
+            payload = _j.dumps({"belief": belief["claim"], "facts": [n["summary"] for n in nodes if n["type"] == "fact"]})
+            raw = services.llm_chat("synthesis", "用中文解释为什么有这个 belief,引用支持事实,简短。", payload)
+            narrative = services.strip_think(raw); nmodel = load_config().llm.synthesis.model
+        except Exception:  # noqa: BLE001
+            narrative = f"{belief['about']['name']} {belief['claim']}(基于 {len(facts)} 条事实)。"
+    else:
+        narrative = f"{belief['about']['name']} {belief['claim']}(基于 {len(facts)} 条事实)。"
+    return {"belief": belief, "support_graph": {"nodes": nodes, "edges": edges},
+            "narrative": narrative, "narrative_model": nmodel}
+
+
+@app.post("/v1/beliefs/build")
+def beliefs_build(body: dict, actor: str = Depends(auth)):
+    """手动触发某 scope 的 belief 聚合。"""
+    scope = body.get("scope")
+    if not scope:
+        raise HTTPException(422, "scope required")
+    from ..extraction.pipeline import _aggregate_belief_for_scope
+    n = _aggregate_belief_for_scope(scope)
+    return {"built": n, "scope": scope}
+
+
 # ── recall / answer ─────────────────────────────────────────────────────────
 @app.post("/v1/recall")
 def do_recall(body: schemas.RecallRequest, actor: str = Depends(auth)):
@@ -175,8 +259,29 @@ def do_recall(body: schemas.RecallRequest, actor: str = Depends(auth)):
         win = temporal.parse_temporal(body.temporal["natural"], ref)
         if win:
             valid_during = (win[0].isoformat(), win[1].isoformat())
+    rd = body.recorded_during
+    rd_t = ((rd or {}).get("from"), (rd or {}).get("to")) if rd else None
     return recall(scope=body.scope, query=body.query, view=body.view, top_k=body.top_k,
-                  as_of=body.as_of, valid_during=valid_during)
+                  as_of=body.as_of, valid_during=valid_during, recorded_during=rd_t,
+                  include_superseded=body.include_superseded, budgets=body.budgets,
+                  citation_mode=body.citation_mode, exclude_content=body.exclude_content)
+
+
+@app.post("/v1/recall/stream")
+async def recall_stream(body: schemas.RecallRequest, actor: str = Depends(auth)):
+    """StratifiedPack 逐层 SSE:plan→facts→beliefs→events→context_block→provenance→diagnostics→done。"""
+    import json as _j
+    async def gen():
+        # 先同步算 pack(复用 recall),再按层 emit
+        pack = do_recall(body, actor)
+        yield {"event": "plan", "data": _j.dumps({"scope": body.scope, "channels": pack["diagnostics"]["channels"]})}
+        for layer in ("facts", "beliefs", "events"):
+            yield {"event": "layer", "data": _j.dumps({"layer": layer, "items": pack["layers"][layer]})}
+        yield {"event": "context_block", "data": _j.dumps({"text": pack["context_block"]})}
+        yield {"event": "provenance", "data": _j.dumps(pack["provenance"])}
+        yield {"event": "diagnostics", "data": _j.dumps(pack["diagnostics"])}
+        yield {"event": "done", "data": _j.dumps({"pack_id": pack["pack_id"]})}
+    return EventSourceResponse(gen())
 
 
 @app.post("/v1/answer", response_model=schemas.AnswerResponse)
@@ -201,6 +306,19 @@ def do_answer(body: schemas.AnswerRequest, actor: str = Depends(auth)):
         ans = services.mock_answer(body.query, json.dumps(pack)); model = "mock-extractor"
     citations = [schemas.Citation(marker=f"[{i+1}]", layer="fact", id=f["fact_id"])
                  for i, f in enumerate(pack["layers"]["facts"][:6])]
+    # verifier(可选):异家族 LLM 对照 citations 校验幻觉
+    verified = None
+    vcfg = load_config().llm.verifier
+    if vcfg.enabled and services.llm_configured("answer"):
+        try:
+            import json as _j
+            vraw = services.llm_chat("verifier",
+                "判断答案是否被引用的事实支持。输出 JSON {supported:bool, issues:[...]}。",
+                _j.dumps({"answer": ans, "citations": pack["layers"]["facts"][:6]}))
+            import json as _j2
+            verified = services.parse_llm_json(vraw) if vraw else None
+        except Exception:  # noqa: BLE001
+            verified = None
     return schemas.AnswerResponse(answer=ans, citations=citations, model_used=model, pack_id=pack["pack_id"])
 
 

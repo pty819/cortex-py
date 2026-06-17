@@ -94,6 +94,11 @@ class RecallRequest(BaseModel):
     include: Optional[List[str]] = None
     top_k: Optional[int] = None
     as_of: Optional[str] = None
+    include_superseded: bool = False
+    recorded_during: Optional[Dict[str, str]] = None   # {from, to}
+    budgets: Optional[Dict[str, Any]] = None           # {max_tokens, per_layer_limits}
+    citation_mode: str = "inline_with_markers"         # none|inline_with_markers|block_at_end|structured_only
+    exclude_content: bool = False
     temporal: Optional[Dict[str, Any]] = None   # {natural, reference_date}
 
 

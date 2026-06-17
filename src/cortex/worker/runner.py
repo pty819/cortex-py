@@ -31,6 +31,28 @@ def _dispatch(job: dict) -> dict:
     if jt == "consolidate" and scope:
         from ..maintenance import consolidation_run
         return consolidation_run(scope)
+    if jt == "enrich" and scope:
+        # 异步 KG 增强:跨 event 批量实体消歧(MVP:复用 extraction 的链接,扫无 embedding 实体补算)
+        from sqlalchemy import text as _t
+        from ..db import session_scope as _ss
+        from .. import services
+        from ..config import load_config as _lc
+        n = 0
+        with _ss() as conn:
+            rows = conn.execute(_t("SELECT entity_id::text, canonical_name, description FROM entities WHERE embedding IS NULL AND merged_into IS NULL AND scope=:s LIMIT 100"), {"s": scope}).fetchall()
+            for r in rows:
+                try:
+                    emb = services.embed_one(_lc().extraction.embedding_text.format(name=r[1], description=r[2] or r[1]))
+                    conn.execute(_t("UPDATE entities SET embedding=CAST(:e AS vector) WHERE entity_id=CAST(:id AS uuid)"),
+                                 {"e": str(emb), "id": r[0]})
+                    n += 1
+                except Exception:
+                    pass
+        return {"enriched": n}
+    if jt == "synthesize" and scope:
+        from ..understanding import synthesize_scope
+        payload = job.get("payload") or {}
+        return synthesize_scope(scope, topics=payload.get("topics"))
     return {"ok": True, "note": f"no handler for {jt}"}
 
 
