@@ -559,19 +559,110 @@ SELECT f.* FROM facts f WHERE f.scope = ANY($ancestor_scopes) ...;
 
 ---
 
-## 11. 阶段 0 待用户批准的决策点汇总
+## 11. 数据模型决策点 — 最终裁定(2026-06-18)
 
-新 agent 呈现此 spec 时,重点请用户确认:
+以下 7 个决策点已全部裁定,**不再开放讨论**(除非实测出现颠覆性证据)。每项附 rationale。
 
-1. **scope 用 TEXT + LIKE vs ltree 扩展**?(阶段 0 冒烟对比)
-2. **facts.object 双模式(entity_id + 字面值 JSONB)** OK?
-3. **supports 用 UUID[] 数组 vs 关联表**?(推荐数组)
-4. **超替用 valid_to 闭合 + 查询过滤,不物化 timeline 表** OK?
-5. **实体合并用 merged_into 软引用,facts 不改** OK?
-6. **object_entity_id 和 subject_id 都建索引**(双向图遍历)OK?
-7. **jobs 表 priority/run_after/visibility timeout 策略** OK?
-8. **embedding 维度**:阶段 0 DDL 写死 `vector(1024)`(jina-v5-text-small)。YAML `embedding.dimension` 也填 1024。启动时校验两者一致。改模型时两者同步改。✅ 已定
+### 决策 1:scope 用 TEXT + `ANY(前缀列表)` — 不用 ltree ✅
+
+**裁定**:scope 列用 `TEXT`,holistic 遍历由应用层算前缀列表 + `scope = ANY($prefixes)`;descend 用 `LIKE scope || '/%'`。
+
+**Rationale**:
+- ltree 的强项是 descend(子树 `@>`),**不是 holistic(祖先)**。而 CortexDB 最高频的 recall 视图恰恰是 holistic(个人记忆 + 组织记忆向上融合)。ltree 没有原生"我的祖先列表"操作,holistic 仍要应用层拆段算前缀——ltree 优势用不上。
+- scope 段数 ≤8,前缀列表最多 8 个,`ANY(array)` 在 btree 索引上是 O(log n) 命中。
+- ltree 要求路径用 `.` 分隔且标签不含冒号,我们的 scope 是 `org:acme/dept:eng`——要 escape,增加摩擦。
+- TEXT 对 SQLModel/SQLAlchemy 透明,ltree 需自定义类型转换。
+- **ltree 是优化不是必需**。阶段 0 用 `scripts/stage0/decision_probe.py` 复现验证;若 descend 成瓶颈,后续局部加 ltree,不动业务逻辑。
+
+### 决策 2:facts.object 双模式(entity_id + 字面值)✅
+
+**裁定**:`object_type` 判别列(`'entity'` / `'literal'`),`object_entity_id` 存实体引用,`object_value` 存 JSONB 字面值。CHECK 约束保证一致。
+
+**Rationale**:
+- 事实的 object 既可能是实体引用("Bob works_at AcmeCorp"),也可能是字面值("Acme deal_stage='signed'")。CortexDB 原版即双模式。
+- 单模式(全 entity)会污染 entity 表——"signed" 不该是实体。
+- 单模式(全字面值)会丢图遍历能力——object 连不到下一节点。
+
+### 决策 3:supports 用 `UUID[]` 数组 — 不建关联表 ✅
+
+**裁定**:facts/beliefs 的 `supports` 列用 `UUID[] NOT NULL DEFAULT '{}'`。
+
+**Rationale**:
+- supports 是记录的**固有属性**(谁产生的),不是独立实体,不需对 supports 本身做 CRUD。
+- 数组省一次 join——facts/beliefs 是大表,图遍历和 recall 频繁读,少一 join 直接提速。
+- "反向查哪些 fact 引用了某 event"罕见(仅 erasure);需要时用 `event_id = ANY(supports)` 查,或建物化视图。
+- 数组的不可变语义与"派生记录只 insert 不 update"哲学一致。
+
+### 决策 4:超替用 valid_to 闭合 + 查询过滤 — 不物化 timeline 表 ✅
+
+**裁定**:新证据到达时,旧 fact 的 `valid_to` 闭合为新 fact 的 `valid_from`;timeline 查询直接扫带部分索引的 facts 表。
+
+**Rationale**:
+- 物化 timeline 表 = 双写(写入时维护 timeline),破坏"派生记录只 insert 不 update"简洁性。
+- `(scope, subject_id, predicate, valid_from)` 部分索引让 timeline 查询走索引扫描。
+- 超替操作 = 一次 UPDATE(闭合旧 valid_to)+ 一次 INSERT(新 fact),事务保证一致。
+
+### 决策 5:实体合并用 merged_into 软引用 — 不重写 facts ✅
+
+**裁定**:`entities.merged_into` 指向目标实体,旧实体不删;查询带 `WHERE merged_into IS NULL` 过滤活实体;facts 的 subject_id/object_id 不改,查询时 resolve。
+
+**Rationale**:
+- 重写 facts 的 subject_id/object_id = 大批量 UPDATE,破坏双时态不可变性(老 fact 语义被追溯改变)。
+- 软引用是知识图谱标准合并模式(同 Neo4j merge 策略)。
+- resolve 函数:`CASE WHEN merged_into IS NOT NULL THEN merged_into ELSE entity_id END`——可做成视图或查询拦截层,业务代码无感。
+- 合并可逆(清 merged_into 即可),重写不可逆。
+- **图遍历影响**:CTE join entities 时带 resolve。阶段 0 冒烟验证此 join 性能。
+
+### 决策 6:subject_id 和 object_entity_id 都建索引(双向)✅
+
+**裁定**:两个方向都建部分索引(`WHERE valid_to IS NULL AND recorded_to IS NULL`)。
+
+**Rationale**:
+- 图遍历既走出边(subject→object),也走入边(object→subject)。`GET /beliefs/why` 是反向遍历。
+- 单向索引 = 反向遍历全表扫,图谱查询致命。
+- 部分索引(只索引"当前为真"的 fact)大幅缩小索引体积;绝大多数查询只关心活 fact。
+- 阶段 0 用 `decision_probe.py` 验证双向 vs 单向的性能差(预期显著)。
+
+### 决策 7:jobs 表 priority/run_after/visibility timeout 策略 ✅
+
+**裁定**:`priority DESC, run_after, created_at` 排序 + `FOR UPDATE SKIP LOCKED` + `max_attempts=3` + visibility timeout(5 分钟)。
+
+**细节**:
+- **ordering**:`(priority DESC, run_after, created_at)`——优先级先,然后到期,最后 FIFO。
+- **重试**:每次失败 `attempts += 1`,`run_after = now() + backoff`(指数退避:`2^attempts` 秒);`attempts > max_attempts` 标 `failed`。
+- **visibility timeout**:`locked_at` 字段,后台扫描(每 60s)把 `status='running' AND locked_at < now() - 5min` 的任务重置为 `queued`(防 worker 崩溃僵尸)。
+- **dead letter**:`failed` 任务保留不自动删,通过 lifecycle 事件暴露给运维。
+- **payload**:JSONB(不同 job_type 输入结构不同)。
 
 ---
 
-*批准此 spec 后,阶段 0 的 DDL + 假数据 INSERT + 冒烟 SQL 直接从此 schema 翻译。*
+## 12. 已知运行时风险(设计不阻塞,对应阶段验证)
+
+以下三项是**有意识保留的运行时未知**,不阻塞设计,但要在对应阶段的**起始**验证,fallback 已备:
+
+| # | 盲区 | 验证阶段 | 验证方式 | Fallback |
+|---|------|----------|----------|----------|
+| R1 | Minimax-M3 对 `response_format: json_schema` 的支持程度(OpenAI 兼容端点未必支持严格 schema) | **阶段 3 起始** | 10 行脚本测 VLM 端点对 json_schema 的响应 | 降级链:json_schema → json_object+prompt schema+应用层校验 → 纯 prompt+JSON 修复 |
+| R2 | Prism rerank `threshold=0.1` 的分数语义(yes/no 概率 vs relevance score)及用途(过滤?排序权重?) | **阶段 4** | 拿 20 条真实 query-doc 对跑 rerank,看分数分布 | 改为排序权重不硬过滤;或调阈值 |
+| R3 | jina-v5-text-small(1024 维)在实体别名召回("Bob" vs "Robert Smith")上的质量 | **阶段 3**(真抽取时) | 跑 B over C 管线,看召回 top-5 命中率 | 调阈值(0.85/0.30);极端情况换 embedding 模型——**schema 不改**(vector(1024) 换模型只重算 embedding 列) |
+
+**这三项的共同点**:都是"实现时验证"的未知,不是"设计时阻塞"的未知。方案已把"在哪步验证、fallback 是什么"想清楚。
+
+---
+
+## 13. 阶段 0 冒烟脚本(已就绪)
+
+`scripts/stage0/decision_probe.py` 已落盘,用于 Postgres 可达时验证:
+- 点 1:scope TEXT `ANY(前缀)` vs ltree(若可用)性能对比
+- 点 4/6:递归 CTE 2-3 跳 BFS 性能 + 双向 vs 单向索引差异
+- 规模:10 万 events + 1 万实体 + 5 万 facts
+
+**运行**(Postgres 可达后):
+```bash
+python3 scripts/stage0/decision_probe.py
+# 预期:2 跳 BFS < 50ms,3 跳 < 200ms(5 万 facts);双向索引显著优于单向
+```
+
+---
+
+*全部 7 个数据模型决策点已裁定,3 个运行时风险已登记。spec 可进入用户 review → 阶段 0 执行。*

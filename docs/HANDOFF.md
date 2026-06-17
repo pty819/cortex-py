@@ -132,21 +132,22 @@ CortexDB 原版五层:Events → Episodes → Facts → Beliefs → Understandin
 - ✅ 编排方案已定(方案 2 + 阶段 0)
 - ✅ **调研笔记已写**:`docs/specs/02-research-notes.md`
 - ✅ **技术选型 spec 已写**:`docs/specs/01-technical-decisions.md`
-- ✅ **数据模型 spec 已写**:`docs/specs/03-data-model.md`(含完整 schema + 决策 rationale)
+- ✅ **数据模型 spec 已写**:`docs/specs/03-data-model.md`(8 表完整 schema + **7 决策点全部裁定**)
+- ✅ **运行时风险登记**:`03-data-model.md` 第 12 节(3 项,对应阶段验证)
 - ✅ **阶段 0 冒烟测试计划已写**:`docs/specs/04-stage0-smoke-test.md`
+- ✅ **阶段 0 冒烟脚本已就绪**:`scripts/stage0/decision_probe.py`(待 Postgres 可达执行)
 - ⬜ **用户 review specs**(下一步——请用户审阅 `docs/specs/` 全部四份)
-- ⬜ **用户批准数据模型决策**(03-data-model.md 第 11 节列了 8 个待确认决策点)
+- ⬜ **阶段 0 执行**(待 Postgres `192.168.1.21` 可达)
 - ⬜ 实现计划(writing-plans)
-- ⬜ 阶段 0 执行
 
 ### 对新 agent 的流程要求
 
 1. **先读本文件**,然后读 `docs/specs/` 下四份 spec(01→02→03→04 顺序)
-2. **把数据模型决策点呈现给用户确认**(见 `03-data-model.md` 第 11 节的 8 个点)
-3. 用户确认后,如有调整则更新 spec
-4. **执行阶段 0**:按 `04-stage0-smoke-test.md` 写 `scripts/stage0/` 的 SQL 脚本,用 Postgres 跑冒烟测试
-5. 阶段 0 通过后,转入 writing-plans 制定阶段 1-5 的实现计划
-6. **硬性约束:数据模型 spec 批准前,不写 schema DDL;阶段 0 冒烟通过前,不写 Python 业务代码**
+2. **7 个数据模型决策点已全部裁定**(见 `03-data-model.md` 第 11 节),**不需要再问用户**。如有颠覆性实测证据再提请用户复议。
+3. **3 个运行时风险已登记**(见 `03-data-model.md` 第 12 节),在对应阶段起始验证。
+4. **执行阶段 0**:Postgres 可达后,跑 `scripts/stage0/decision_probe.py` 验证图遍历/scope 性能;按 `04-stage0-smoke-test.md` 补全假数据 + 双时态/链接/隔离冒烟脚本。
+5. 阶段 0 通过后,转入 writing-plans 制定阶段 1-5 的实现计划。
+6. **硬性约束:阶段 0 冒烟通过前,不写 Python 业务代码**
 
 **这是 brainstorming skill 的 HARD-GATE。**
 
