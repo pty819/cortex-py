@@ -74,16 +74,18 @@ scripts/stage0/
 - seed 实体 `ent_acme_corp`,max_hops=2,沿所有 predicate
 - 预期命中:`Priya`(works_at)、`Q3-Renewal`(owns)、negotiating(has_status)
 
-**性能验收**(200 条 facts 规模):
-- ✅ 2 跳 BFS < 50ms
-- ✅ 3 跳 BFS < 200ms
+**性能验收**(200 条 facts 规模,小数据集):
+- ✅ 2 跳 BFS < 20ms
+- ✅ 3 跳 BFS < 30ms
 
 **压力测试**(扩展到 1 万条 facts,脚本自动生成):
 - 用 `generate_series` + 随机 entity_id/predicate 组合批量 INSERT,从 200 条扩到 1 万条
-- ✅ 2 跳 BFS < 500ms
-- ✅ 3 跳 BFS < 2s
+- ✅ 2 跳 BFS < 30ms
+- ✅ 3 跳 BFS < 50ms
 
-如果 1 万条时 3 跳 > 2s,说明索引设计有问题,需优化(考虑物化 graph_edges 视图或 ltree)。
+> **实测基线**(`scripts/stage0/decision_probe.py`,1 万 facts,真实 Postgres,2026-06-18):2 跳 5.47ms / 3 跳 6.94ms。上面的验收标准是基线的 4-8 倍冗余,留余地给真实业务数据(每条 fact 带 JSONB object、多 scope、双时态过滤)。
+
+如果 1 万条时 3 跳 > 500ms(远超基线 70 倍),说明索引设计有问题,需优化(考虑物化 graph_edges 视图)。
 
 ### 4.3 实体链接 B over C(脚本 05)
 

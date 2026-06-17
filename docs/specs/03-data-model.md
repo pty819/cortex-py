@@ -602,6 +602,8 @@ SELECT f.* FROM facts f WHERE f.scope = ANY($ancestor_scopes) ...;
 - `(scope, subject_id, predicate, valid_from)` 部分索引让 timeline 查询走索引扫描。
 - 超替操作 = 一次 UPDATE(闭合旧 valid_to)+ 一次 INSERT(新 fact),事务保证一致。
 
+**实测证据**(`scripts/stage0/decision_probe.py`,1 万 facts,真实 Postgres):递归 CTE 图遍历 2 跳 5.47ms / 3 跳 6.94ms——同表上的 timeline 查询走部分索引,性能同量级或更好。架构成立。
+
 ### 决策 5:实体合并用 merged_into 软引用 — 不重写 facts ✅
 
 **裁定**:`entities.merged_into` 指向目标实体,旧实体不删;查询带 `WHERE merged_into IS NULL` 过滤活实体;facts 的 subject_id/object_id 不改,查询时 resolve。
@@ -617,11 +619,17 @@ SELECT f.* FROM facts f WHERE f.scope = ANY($ancestor_scopes) ...;
 
 **裁定**:两个方向都建部分索引(`WHERE valid_to IS NULL AND recorded_to IS NULL`)。
 
-**Rationale**:
-- 图遍历既走出边(subject→object),也走入边(object→subject)。`GET /beliefs/why` 是反向遍历。
-- 单向索引 = 反向遍历全表扫,图谱查询致命。
-- 部分索引(只索引"当前为真"的 fact)大幅缩小索引体积;绝大多数查询只关心活 fact。
-- 阶段 0 用 `decision_probe.py` 验证双向 vs 单向的性能差(预期显著)。
+**Rationale**(经实测修正):
+- ❌ ~~"图遍历反向走需要 object 索引,否则全表扫"~~ —— **实测推翻**。递归 CTE 的 BFS 由工作集驱动下一跳 join,planner 不依赖 facts 表的索引方向;有无 object 索引对 BFS 性能几乎无差(见下方实测)。
+- ✅ **真实价值在非递归的反向点查**:`GET /beliefs/why`(哪些 fact 支持这个 belief)、erasures(哪些 fact 引用了要删的 event)、`facts/timeline` 的反向查询,都是直接 `WHERE object_entity_id = ?` 或 `event_id = ANY(supports)`——这些**不是递归 CTE**,没 object 索引就是全表扫。
+- ✅ 部分索引(只索引"当前为真"的 fact)大幅缩小索引体积;绝大多数查询只关心活 fact。
+- ✅ 索引维护成本低:facts 写入是异步低频,两个索引同时更新开销可接受。
+
+**实测证据**(`scripts/stage0/decision_probe.py`,1 万 facts,真实 Postgres):
+- BFS 3 跳 双向索引:6.94ms
+- BFS 3 跳 单向索引:5.60ms(CTE 场景双向无优势)
+- → 双向索引的**必要性在 BFS 之外的反向点查**,BFS 性能不构成理由
+- 注:双向索引在 BFS 上略慢(0.8x)是正常的——多一个索引意味着 planner 多一个选择,统计噪声范畴,不构成反向理由
 
 ### 决策 7:jobs 表 priority/run_after/visibility timeout 策略 ✅
 
