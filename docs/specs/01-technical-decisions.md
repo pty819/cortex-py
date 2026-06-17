@@ -64,35 +64,93 @@ CortexDB 原版五层:Events → Episodes → Facts → Beliefs → Understandin
 
 三路 LLM + rerank + embedding 分开配。具体字段命名见数据模型 spec。
 
+**配置规范**(基于用户提供的实际服务配置):
+
+| 字段 | 出现在 | 作用 | 必填 |
+|------|--------|------|------|
+| `provider` | 全部 | 仅标注 metadata,实际全走 OpenAI 兼容接口 | 是 |
+| `api_key` | 全部 | bearer key(本地服务常用占位符如 `"local"`) | 是 |
+| `api_base` | 全部 | **统一到 `/v1`,不含端点路径**(见下方 URL 规范) | 是 |
+| `model` | 全部 | 模型名 | 是 |
+| `temperature` | llm.* | 抽取用 0.0(确定性输出) | 否 |
+| `timeout` | 全部 | 秒,请求超时 | 否 |
+| `max_retries` | 全部 | 失败重试次数 | 否 |
+| `max_concurrent` | embedding, llm | worker 并发上限(限流) | 否 |
+| `dimension` | embedding | 输出维度,**必须等于 entities.embedding 的 vector(N)** | 是 |
+| `threshold` | rerank | 分数低于此值丢弃 | 否 |
+
+**URL 规范(1c 决策)**:`api_base` 永远只到 `/v1`,端点路径由 worker 拼:
+- embedding: `f"{api_base}/embeddings"`
+- rerank: `f"{api_base}/rerank"`
+- llm(chat): `f"{api_base}/chat/completions"`
+
+**维度陷阱警告**:`embedding.dimension` 必须等于 `entities.embedding` 的 `vector(N)`。启动时**强制校验**,不一致拒绝启动(避免 CortexDB 文档警告的"静默召回失败,全 0 结果")。
+
+**实际服务配置**(用户提供,作为参考与测试默认值):
+
 ```yaml
-# config/config.yaml(示意,字段命名待 schema 批准)
+# config/config.yaml
+embedding:
+  provider: jina
+  api_key: local
+  api_base: http://192.168.1.238:8000/v1   # 本地 MLX 服务,不含端点路径
+  model: jina-embeddings-v5-text-small
+  dimension: 1024                          # ⚠️ jina-v5-text-small 输出 1024 维
+  max_concurrent: 10
+
+rerank:
+  provider: openai
+  api_key: local
+  api_base: http://192.168.1.238:8000/v1   # 同一本地服务,/rerank 由 worker 拼
+  model: prism-qwen3.5-reranker-0.8b-optiq-5bpw
+  threshold: 0.1
+
 llm:
   extraction:
-    base_url: "..."
-    api_key: "..."
-    model: "gpt-4o-mini"
+    provider: openai
+    model: Minimax-M3
+    api_key: sk-cp-NYG22b...               # 远程 Minimax(见下方"服务拓扑")
+    api_base: https://api.minimaxi.com/v1
+    temperature: 0.0
+    timeout: 600
+    max_retries: 2
+    max_concurrent: 10
   answer:
-    base_url: "..."
-    api_key: "..."
-    model: "claude-opus-4-6"
+    # MVP 阶段复用 extraction 配置(同一 VLM 端点)
+    provider: openai
+    model: Minimax-M3
+    api_key: sk-cp-NYG22b...
+    api_base: https://api.minimaxi.com/v1
+    temperature: 0.0
+    timeout: 600
+    max_retries: 2
   synthesis:
-    base_url: "..."
-    api_key: "..."
-    model: ""  # 空 = 禁用 Understanding 合成(MVP 默认禁用)
-embedding:
-  base_url: "..."
-  api_key: "..."
-  model: "text-embedding-3-small"
-  dims: 1536
-rerank:
-  base_url: "..."
-  api_key: "..."
-  model: "..."
+    # MVP 阶段复用;Understanding 跳过,此段保留以备 Beliefs 聚合用
+    provider: openai
+    model: Minimax-M3
+    api_key: sk-cp-NYG22b...
+    api_base: https://api.minimaxi.com/v1
+    temperature: 0.0
+    timeout: 600
+    max_retries: 2
+
 database:
-  url: "postgresql://..."
+  url: postgresql://postgres:0prV2JrQ1uJSBHZ2@192.168.1.21:5432/postgres
 api:
-  key: "..."  # 静态 API key
+  key: ""  # 静态 API key(待用户填)
 ```
+
+> **注**:YAML 里三路 LLM 分段保留(将来好分叉到不同模型),但 MVP 测试阶段三段填相同值(用户确认)。
+
+### 服务拓扑(基于实际配置)
+
+| 服务 | 位置 | 用途 |
+|------|------|------|
+| Jina v5 MLX Server | `http://192.168.1.238:8000` | 本地 embedding + rerank + chat proxy(三个 `/v1/*` 端点) |
+| Minimax-M3 VLM | `https://api.minimaxi.com/v1` | 远程抽取/答案/合成 LLM |
+| PostgreSQL | `192.168.1.21:5432` | 数据库 + pgvector + 队列 |
+
+**注意**:本地 MLX 服务(`192.168.1.238`)同时提供 `/v1/embeddings`、`/v1/rerank`、`/v1/chat/completions` 三个端点(经 OpenAPI 文档确认)。但用户的 VLM 配置指向远程 Minimax,说明 VLM 走远程、embedding/rerank 走本地。worker 按各自配置的 `api_base` 调用,不假设三个服务同址。
 
 ---
 

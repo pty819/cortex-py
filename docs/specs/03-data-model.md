@@ -127,7 +127,8 @@ CREATE TABLE entities (
     description        TEXT,                       -- LLM 生成的一句话描述(用于 B 层判定 prompt)
 
     -- 向量(B over C 的 C 层)
-    embedding          vector(1536),              -- pgvector,由 canonical_name+description 计算
+    embedding          vector(1024),              -- pgvector,由 canonical_name+description 计算
+                                               -- ⚠️ 维度必须等于 YAML embedding.dimension(jina-v5=1024)
 
     -- 合并/分裂
     merged_into        UUID REFERENCES entities(entity_id),  -- 非空 = 已合并到目标
@@ -152,8 +153,8 @@ CREATE INDEX idx_entities_scope_type ON entities (scope, entity_type) WHERE merg
 
 ### 决策点与 rationale
 
-**2a. embedding 维度 1536?**
-→ **是**(配合 `text-embedding-3-small`)。YAML 可配,改模型时同步改。这与 `vector_dimensions` 必须一致(见 [`01-technical-decisions.md`](01-technical-decisions.md) 配置章节的"维度陷阱"警告)。
+**2a. embedding 维度 1024?**
+→ **是**(配合 `jina-embeddings-v5-text-small`,输出 1024 维)。YAML 可配,改模型时同步改。`vector(1024)` 与 `embedding.dimension` **必须一致**——启动时强制校验,不一致拒绝启动(避免 CortexDB 文档警告的"静默召回失败,全 0 结果")。阶段 0 的 DDL 写死 1024。
 
 **2b. 合并用 `merged_into` 软引用?**
 → **是**。合并时:`entities.merged_into = target_id`,不删行。所有查询带 `WHERE merged_into IS NULL` 过滤活实体。facts 表的 subject_id/object_id 不改——查询时用一个 resolve 函数(CASE WHEN merged_into IS NOT NULL THEN merged_into ELSE entity_id)解析到规范实体。
@@ -569,7 +570,7 @@ SELECT f.* FROM facts f WHERE f.scope = ANY($ancestor_scopes) ...;
 5. **实体合并用 merged_into 软引用,facts 不改** OK?
 6. **object_entity_id 和 subject_id 都建索引**(双向图遍历)OK?
 7. **jobs 表 priority/run_after/visibility timeout 策略** OK?
-8. **embedding 维度 1536 写死还是 YAML 配**?(推荐 YAML,但阶段 0 先写死 1536 跑通)
+8. **embedding 维度**:阶段 0 DDL 写死 `vector(1024)`(jina-v5-text-small)。YAML `embedding.dimension` 也填 1024。启动时校验两者一致。改模型时两者同步改。✅ 已定
 
 ---
 
