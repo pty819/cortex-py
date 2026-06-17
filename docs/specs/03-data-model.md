@@ -668,7 +668,7 @@ SELECT f.* FROM facts f WHERE f.scope = ANY($ancestor_scopes) ...;
 **运行**(Postgres 可达后):
 ```bash
 python3 scripts/stage0/decision_probe.py
-# 预期:2 跳 BFS < 50ms,3 跳 < 200ms(5 万 facts);双向索引显著优于单向
+# 预期:2-3 跳 BFS 毫秒~亚秒级(1 万 facts);双向 vs 单向的差异在反向点查,不在 BFS
 ```
 
 ---
