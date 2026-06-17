@@ -21,6 +21,7 @@ from ..retrieval import recall, get_cached_pack
 from .. import ingest, export_data
 from .. import erasures, episodes, temporal
 from .. import maintenance as maint
+from .. import understanding as und
 
 app = FastAPI(title="cortex", version="0.1.0")
 cfg = load_config()
@@ -602,3 +603,39 @@ def admin_maintenance(body: schemas.MaintenanceRequest, actor: str = Depends(aut
     if body.action == "consolidation":
         return maint.consolidation_run(body.scope)
     raise HTTPException(422, "action must be methylation|consolidation")
+
+
+# ── Understanding 层 ───────────────────────────────────────────────────────
+@app.get("/v1/understanding")
+def understanding_list(scope: str, topic: str = Query(None), limit: int = 50, actor: str = Depends(auth)):
+    return {"items": und.list_concepts(scope, topic, limit)}
+
+
+@app.get("/v1/understanding/coverage")
+def understanding_coverage(scope: str, actor: str = Depends(auth)):
+    return und.coverage(scope)
+
+
+@app.get("/v1/understanding/{concept_id}")
+def understanding_get(concept_id: str, actor: str = Depends(auth)):
+    c = und.get_concept(concept_id)
+    if not c:
+        raise HTTPException(404, "concept not found")
+    return c
+
+
+@app.get("/v1/understanding/{concept_id}/related")
+def understanding_related(concept_id: str, relation: str = Query(None), depth: int = 2, limit: int = 20,
+                          actor: str = Depends(auth)):
+    return {"items": und.related_concepts(concept_id, relation, depth, limit)}
+
+
+@app.post("/v1/understanding/synthesize")
+def understanding_synthesize(body: dict, actor: str = Depends(auth)):
+    scope = body.get("scope")
+    if not scope:
+        raise HTTPException(422, "scope required")
+    topics = body.get("topics")
+    # 同步合成(MVP;官方是 202 async,我们直接跑,小 scope 够快)
+    res = und.synthesize_scope(scope, topics=topics)
+    return {"status": "completed", **res, "lifecycle_stream": f"/v1/lifecycle/stream?scope={scope}"}
