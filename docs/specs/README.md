@@ -24,6 +24,9 @@ CortexDB 原版为什么这么设计,本项目继承什么、改什么。基于 
 纯 SQL 验证 schema 的计划:假数据设计、6 个验证脚本、验收标准、失败处理决策树。
 **方案 2(分层构建)的保险,不可跳过。**
 
+### 6. [`05-gap-closure.md`](05-gap-closure.md) — 缺口闭合与范围扩展 ⚠️ 待批准
+通读 56 篇原文后的差距分析:把 A 档(blobs / 批量+导入 / vocabularies / erasures)与 B 档(StratifiedPack 装配 / forget·erasures 双轨 / `?wait=` / 层直读 / `/answer` 管线)设计到可落地。**5 张新表 + 2 列扩展 + 修订路线图(Stage 0→7)。只新增,不改 03 的 7 项锁定决策。**
+
 ## 参考材料
 
 ### [`../reference/`](../reference/README.md) — CortexDB 原版文档存档(56 篇全文)
@@ -43,8 +46,9 @@ CortexDB 原版为什么这么设计,本项目继承什么、改什么。基于 
 | 运行时风险登记 | ✅ 完成(3 项,见 03 第 12 节) |
 | 阶段 0 计划 | ✅ 完成 |
 | 阶段 0 冒烟脚本 | ✅ 已就绪(`scripts/stage0/decision_probe.py`,待 Postgres 可达执行) |
+| **缺口闭合 spec(05)** | ✅ **完成**(A 档纳入 + B 档设计 + 修订路线图;Q1 三槽身份 / Q2 structured 视图均已裁定) |
 | **用户 review 全部 specs** | ⬜ **下一步** |
-| 阶段 0 执行(SQL 冒烟) | ⬜(待 Postgres `192.168.1.21` 可达) |
+| 阶段 0 执行(SQL 冒烟) | ✅ **完成** — 37 PASS / 0 FAIL(`scripts/stage0/run_all.sh`,真实 PG 18.4 @ 192.168.1.21) |
 | writing-plans(阶段 1-5) | ⬜ |
 | 阶段 1 实施 | ⬜ |
 

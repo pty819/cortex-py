@@ -76,6 +76,8 @@ CortexDB 原版五层:Events → Episodes → Facts → Beliefs → Understandin
 | **4** | 检索(4 通道:BM25 + pgvector + 图遍历 + rerank + RRF) | 1 周 |
 | **5** | FastAPI 端点(experience/recall/answer/forget)+ answer LLM | 1 周 |
 
+> **⚠️ 上表是初版。经通读 56 篇原文的差距分析,`docs/specs/05-gap-closure.md` 已把路线图扩展为 Stage 0→7**,并纳入 A 档(blobs / 批量+导入 / vocabularies / erasures)与 B 档(StratifiedPack 装配 / forget·erasures 双轨 / `?wait=` / 层直读 / `/answer` 管线)。**以 05 §5 的修订路线图为准。**
+
 ### 阶段 0 的关键验证目标
 
 在写任何 Python 业务代码前,用纯 SQL 验证以下问题:
@@ -136,7 +138,9 @@ CortexDB 原版五层:Events → Episodes → Facts → Beliefs → Understandin
 - ✅ **运行时风险登记**:`03-data-model.md` 第 12 节(3 项,对应阶段验证)
 - ✅ **阶段 0 冒烟测试计划已写**:`docs/specs/04-stage0-smoke-test.md`
 - ✅ **阶段 0 冒烟脚本已就绪**:`scripts/stage0/decision_probe.py`(待 Postgres 可达执行)
-- ⬜ **用户 review specs**(下一步——请用户审阅 `docs/specs/` 全部四份)
+- ✅ **缺口闭合 spec 已写**:`docs/specs/05-gap-closure.md`(A 档纳入 + B 档设计 + 路线图扩展为 Stage 0→7;Q1 三槽身份 / Q2 structured 视图均已裁定)
+- ✅ **阶段 0 冒烟执行**:`scripts/stage0/run_all.sh` 跑通,37 PASS / 0 FAIL(真实 PG 18.4 @ 192.168.1.21)。覆盖:双时态超替/timeline/as_of、递归 CTE 2-3 跳 BFS、pgvector 召回 + B over C 三阈值、scope 隔离 + holistic/descend/structured + LIKE vs ltree、Postgres-as-queue(SKIP LOCKED/priority/visibility timeout/死信)、blobs SHA-256 去重、vocabularies coerce(closed/open)、erasures 引用计数(redact vs delete + array_remove + blob 清理)。**无 psql 依赖**(走 psycopg2 + psql 变量预处理器)。
+- ⬜ **用户 review specs**(下一步)
 - ⬜ **阶段 0 执行**(待 Postgres `192.168.1.21` 可达)
 - ⬜ 实现计划(writing-plans)
 

@@ -1,0 +1,486 @@
+"""FastAPI 端点:experience/recall/answer/forget + 层直读 + lifecycle SSE。
+
+静态 key + X-Cortex-Actor;scope 由请求体带(强制过滤在查询层)。
+"""
+from __future__ import annotations
+
+import asyncio
+import time
+import uuid
+
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+from sse_starlette.sse import EventSourceResponse
+
+from ..config import load_config
+from ..core import append_event, enqueue_job, emit_lifecycle, IdempotencyConflict, list_lifecycle_since
+from ..db import session_scope
+from .. import schemas, services
+from ..retrieval import recall, get_cached_pack
+from .. import ingest, export_data
+from .. import erasures, episodes, temporal
+from .. import maintenance as maint
+
+app = FastAPI(title="cortex", version="0.1.0")
+cfg = load_config()
+app.add_middleware(CORSMiddleware, allow_origins=cfg.api.cors_origins or ["*"],
+                   allow_methods=["*"], allow_headers=["*"])
+
+
+# ── auth dependency ─────────────────────────────────────────────────────────
+def auth(authorization: str = Header(default=""), x_cortex_actor: str = Header(default="user:alice")):
+    if cfg.api.key:
+        token = authorization.replace("Bearer ", "").strip()
+        if token != cfg.api.key:
+            raise HTTPException(401, "invalid api key")
+    return x_cortex_actor or "user:alice"
+
+
+# ── health ──────────────────────────────────────────────────────────────────
+@app.get("/v1/health")
+def health():
+    from ..db import assert_services_reachable
+    return {"status": "ok", **assert_services_reachable()}
+
+
+# ── experience (唯一写)──────────────────────────────────────────────────────
+@app.post("/v1/experience", response_model=schemas.ExperienceResponse)
+def experience(body: schemas.ExperienceRequest, actor: str = Depends(auth)):
+    content = body.content.model_dump(exclude_none=True)
+    context = body.context.model_dump(exclude_none=True)
+    try:
+        eid, offset = append_event(scope=body.scope, modality=body.modality, content=content,
+                                   context=context, caller=actor, observed_actor=body.observed_actor,
+                                   subject=body.subject, directives=body.directives,
+                                   idempotency_key=body.idempotency_key)
+    except IdempotencyConflict as e:
+        raise HTTPException(409, str(e))
+    # enqueue 抽取 job(写路径无 LLM,只入队)
+    enqueue_job(job_type="extract", scope=body.scope, event_id=eid, priority=0)
+    return schemas.ExperienceResponse(event_id=eid, wal_offset=offset, status="captured",
+                                      lifecycle_stream=f"/v1/lifecycle/stream?event_id={eid}")
+
+
+# ── lifecycle SSE ───────────────────────────────────────────────────────────
+@app.get("/v1/lifecycle/stream")
+async def lifecycle_stream(request: Request, event_id: str = Query(None), scope: str = Query(None),
+                           actor: str = Depends(auth)):
+    async def gen():
+        seen: set = set()
+        # 先补一帧 captured
+        for _ in range(120):  # 最多 ~2 分钟
+            if await request.is_disconnected():
+                return
+            with session_scope() as conn:
+                rows = list_lifecycle_since(conn, scope=scope, event_id=event_id, limit=50)
+            for r in rows:
+                if r["lifecycle_id"] in seen:
+                    continue
+                seen.add(r["lifecycle_id"])
+                yield {"event": "lifecycle", "data": __import__("json").dumps(r)}
+            if event_id:
+                # 该 event 已 extracted/indexed 即可多等一会
+                kinds = {r["kind"] for r in rows if r.get("event_id") == event_id}
+                if "indexed" in kinds or "failed" in kinds:
+                    await asyncio.sleep(0.2)
+                    yield {"event": "done", "data": "{}"}
+                    return
+            await asyncio.sleep(1.0)
+    return EventSourceResponse(gen())
+
+
+# ── 层直读 ──────────────────────────────────────────────────────────────────
+@app.get("/v1/entities")
+def list_entities(scope: str, q: str = Query(None), limit: int = 100, actor: str = Depends(auth)):
+    with session_scope() as c:
+        sql = """SELECT entity_id::text, canonical_name, entity_type, description, merged_into::text
+                 FROM entities WHERE scope=:s AND merged_into IS NULL"""
+        p: dict = {"s": scope, "lim": limit}
+        if q:
+            sql += " AND (canonical_name ILIKE :q OR description ILIKE :q)"
+            p["q"] = f"%{q}%"
+        sql += " ORDER BY created_at DESC LIMIT :lim"
+        rows = c.execute(text(sql), p).fetchall()
+    return {"items": [dict(entity_id=r[0], canonical_name=r[1], entity_type=r[2],
+                           description=r[3], merged_into=r[4]) for r in rows]}
+
+
+@app.get("/v1/facts")
+def list_facts(scope: str, subject: str = Query(None), predicate: str = Query(None),
+               limit: int = 100, actor: str = Depends(auth)):
+    sql = """SELECT f.fact_id::text, f.predicate, f.object_type, f.object_value,
+                    o.canonical_name AS oname, s.canonical_name AS sname,
+                    s.entity_id::text AS sid, o.entity_id::text AS oid,
+                    f.confidence, f.valid_from::text, f.valid_to::text
+             FROM facts f JOIN entities s ON s.entity_id=f.subject_id
+             LEFT JOIN entities o ON o.entity_id=f.object_entity_id
+             WHERE f.scope=:s AND f.valid_to IS NULL AND f.recorded_to IS NULL"""
+    p: dict = {"s": scope, "lim": limit}
+    if subject:
+        sql += " AND f.subject_id=CAST(:sub AS uuid)"; p["sub"] = subject
+    if predicate:
+        sql += " AND f.predicate=:pred"; p["pred"] = predicate
+    sql += " ORDER BY f.valid_from DESC NULLS LAST LIMIT :lim"
+    with session_scope() as c:
+        rows = c.execute(text(sql), p).fetchall()
+    return {"items": [dict(fact_id=r[0], predicate=r[1],
+                           subject={"id": r[6], "name": r[5]},
+                           object=({"datatype": r[2], "value": r[4] or (r[3] or {}).get("value")}
+                                   if r[2] != "literal" else {"datatype": "literal", "value": (r[3] or {}).get("value")}),
+                           confidence=r[8], valid_from=r[9], valid_to=r[10]) for r in rows]}
+
+
+@app.get("/v1/facts/timeline", response_model=schemas.TimelineResponse)
+def facts_timeline(scope: str, subject: str, predicate: str, actor: str = Depends(auth)):
+    with session_scope() as c:
+        rows = c.execute(text("""
+            SELECT fact_id::text, object_value->>'value', valid_from::text, valid_to::text, confidence
+            FROM facts WHERE scope=:s AND subject_id=CAST(:sub AS uuid) AND predicate=:p AND recorded_to IS NULL
+            ORDER BY valid_from
+        """), {"s": scope, "sub": subject, "p": predicate}).fetchall()
+    return {"subject": subject, "predicate": predicate,
+            "versions": [dict(fact_id=r[0], object_value=r[1], valid_from=r[2],
+                              valid_to=r[3], confidence=r[4]) for r in rows]}
+
+
+@app.get("/v1/beliefs")
+def list_beliefs(scope: str, about: str = Query(None), actor: str = Depends(auth)):
+    sql = """SELECT b.belief_id::text, b.stance, b.claim, b.confidence,
+                    b.about_entity_id::text, e.canonical_name, b.supports::text[]
+             FROM beliefs b JOIN entities e ON e.entity_id=b.about_entity_id
+             WHERE b.scope=:s AND b.valid_to IS NULL AND b.recorded_to IS NULL"""
+    p: dict = {"s": scope}
+    if about:
+        sql += " AND b.about_entity_id=CAST(:a AS uuid)"; p["a"] = about
+    sql += " LIMIT 50"
+    with session_scope() as c:
+        rows = c.execute(text(sql), p).fetchall()
+    return {"items": [dict(belief_id=r[0], stance=r[1], claim=r[2], confidence=r[3],
+                           about={"id": r[4], "name": r[5]}, supports=list(r[6] or [])) for r in rows]}
+
+
+# ── recall / answer ─────────────────────────────────────────────────────────
+@app.post("/v1/recall")
+def do_recall(body: schemas.RecallRequest, actor: str = Depends(auth)):
+    valid_during = None
+    if body.temporal and body.temporal.get("natural"):
+        from datetime import datetime
+        ref = None
+        if body.temporal.get("reference_date"):
+            try:
+                ref = datetime.fromisoformat(body.temporal["reference_date"].replace("Z", "+00:00"))
+            except Exception:  # noqa: BLE001
+                ref = None
+        win = temporal.parse_temporal(body.temporal["natural"], ref)
+        if win:
+            valid_during = (win[0].isoformat(), win[1].isoformat())
+    return recall(scope=body.scope, query=body.query, view=body.view, top_k=body.top_k,
+                  as_of=body.as_of, valid_during=valid_during)
+
+
+@app.post("/v1/answer", response_model=schemas.AnswerResponse)
+def do_answer(body: schemas.AnswerRequest, actor: str = Depends(auth)):
+    if body.use_pack_id:
+        pack = get_cached_pack(body.use_pack_id)
+        if not pack:
+            raise HTTPException(404, "pack expired or not found")
+    else:
+        pack = recall(scope=body.scope, query=body.query)
+    import json
+    if services.llm_configured("answer"):
+        try:
+            raw = services.llm_chat("answer",
+                "依据给定记忆(含[n]引用标记)回答用户问题,在答案里保留引用标记。",
+                json.dumps({"query": body.query, "pack_layers": pack["layers"]}))
+            ans = services.strip_think(raw)
+            model = load_config().llm.answer.model
+        except Exception:  # noqa: BLE001
+            ans = services.mock_answer(body.query, json.dumps(pack)); model = "mock"
+    else:
+        ans = services.mock_answer(body.query, json.dumps(pack)); model = "mock-extractor"
+    citations = [schemas.Citation(marker=f"[{i+1}]", layer="fact", id=f["fact_id"])
+                 for i, f in enumerate(pack["layers"]["facts"][:6])]
+    return schemas.AnswerResponse(answer=ans, citations=citations, model_used=model, pack_id=pack["pack_id"])
+
+
+# ── forget(derived_only:recorded_to 软关)──────────────────────────────────
+@app.post("/v1/forget", response_model=schemas.ForgetResponse)
+def forget(body: schemas.ForgetRequest, actor: str = Depends(auth)):
+    if not (body.predicate or body.about_entity) and not body.confirm_all:
+        raise HTTPException(422, "empty selector needs confirm_all=true")
+    with session_scope() as conn:
+        where = "scope=:s AND recorded_to IS NULL"
+        p: dict = {"s": body.scope}
+        if body.predicate:
+            where += " AND predicate=:pred"; p["pred"] = body.predicate
+        if body.about_entity:
+            where += " AND subject_id=CAST(:a AS uuid)"; p["a"] = body.about_entity
+        n_facts = conn.execute(text(f"UPDATE facts SET recorded_to=now() WHERE {where}"), p).rowcount or 0
+        p2 = dict(p); p2["a"] = body.about_entity
+        n_bel = conn.execute(text(f"UPDATE beliefs SET recorded_to=now() WHERE scope=:s AND recorded_to IS NULL"
+                                  + (" AND about_entity_id=CAST(:a AS uuid)" if body.about_entity else "")),
+                             {"s": body.scope, "a": body.about_entity}).rowcount or 0 if body.about_entity else 0
+        aid = emit_lifecycle(conn, kind="forgotten", scope=body.scope,
+                             payload={"facts": n_facts, "beliefs": n_bel, "cascade": body.cascade})
+        if body.cascade == "redact_events":
+            conn.execute(text("""UPDATE events SET content='{}'::jsonb, excluded_from_recall=true
+                WHERE scope=:s AND event_id IN (
+                  SELECT unnest(supports) FROM facts WHERE scope=:s AND recorded_to IS NOT NULL)"""),
+                         {"s": body.scope})
+    return schemas.ForgetResponse(deleted={"facts": n_facts, "beliefs": n_bel}, audit_id=aid)
+
+
+# ── Stage 6: bulk / import / export ─────────────────────────────────────────
+@app.post("/v1/experience/bulk", response_model=schemas.ImportResponse)
+def experience_bulk(body: schemas.BulkExperienceRequest, actor: str = Depends(auth)):
+    items = [{"scope": body.scope, "modality": it.modality,
+              "content": it.content.model_dump(exclude_none=True),
+              "context": it.context.model_dump(exclude_none=True),
+              "observed_actor": it.observed_actor, "subject": it.subject,
+              "directives": it.directives, "idempotency_key": it.idempotency_key} for it in body.items]
+    res = ingest.bulk_ingest(scope=body.scope, items=items, source="bulk",
+                             ordering=body.ordering, caller=actor)
+    return schemas.ImportResponse(import_id=res["import_id"], source="bulk",
+                                  accepted=res["accepted"], failed=res["failed"],
+                                  lifecycle_stream=f"/v1/lifecycle/stream?scope={body.scope}")
+
+
+@app.post("/v1/import/jsonl", response_model=schemas.ImportResponse)
+def imp_jsonl(body: schemas.ImportJsonlRequest, actor: str = Depends(auth)):
+    res = ingest.import_jsonl(body.scope, body.lines, body.scope_template)
+    return schemas.ImportResponse(import_id=res["import_id"], source="jsonl",
+                                  accepted=res["accepted"], failed=res["failed"],
+                                  lifecycle_stream=f"/v1/lifecycle/stream?scope={body.scope}")
+
+
+@app.post("/v1/import/mem0", response_model=schemas.ImportResponse)
+def imp_mem0(body: schemas.ImportMem0Request, actor: str = Depends(auth)):
+    res = ingest.import_mem0(body.scope, [m.model_dump() for m in body.memories], body.scope_template)
+    return schemas.ImportResponse(import_id=res["import_id"], source="mem0",
+                                  accepted=res["accepted"], failed=res["failed"],
+                                  lifecycle_stream=f"/v1/lifecycle/stream?scope={body.scope}")
+
+
+@app.post("/v1/import/zep", response_model=schemas.ImportResponse)
+def imp_zep(body: schemas.ImportZepRequest, actor: str = Depends(auth)):
+    res = ingest.import_zep_direct(scope=body.scope,
+                                   facts=[f.model_dump() for f in body.facts])
+    return schemas.ImportResponse(import_id=res["import_id"], source="zep",
+                                  accepted=res["accepted"], failed=res["failed"],
+                                  lifecycle_stream=f"/v1/lifecycle/stream?scope={body.scope}")
+
+
+@app.post("/v1/import/letta", response_model=schemas.ImportResponse)
+def imp_letta(body: schemas.ImportLettaRequest, actor: str = Depends(auth)):
+    res = ingest.import_letta(body.scope, [b.model_dump() for b in body.blocks], body.scope_template)
+    return schemas.ImportResponse(import_id=res["import_id"], source="letta",
+                                  accepted=res["accepted"], failed=res["failed"],
+                                  lifecycle_stream=f"/v1/lifecycle/stream?scope={body.scope}")
+
+
+@app.post("/v1/import/openai", response_model=schemas.ImportResponse)
+def imp_openai(body: schemas.ImportOpenAIRequest, actor: str = Depends(auth)):
+    res = ingest.import_openai_mem(body.scope, [m.model_dump() for m in body.memories], body.scope_template)
+    return schemas.ImportResponse(import_id=res["import_id"], source="openai",
+                                  accepted=res["accepted"], failed=res["failed"],
+                                  lifecycle_stream=f"/v1/lifecycle/stream?scope={body.scope}")
+
+
+@app.get("/v1/import/{import_id}", response_model=schemas.ImportStatus)
+def import_status(import_id: str, actor: str = Depends(auth)):
+    st = ingest.get_import_status(import_id)
+    if not st:
+        raise HTTPException(404, "import not found")
+    return schemas.ImportStatus(**st)
+
+
+@app.post("/v1/export", response_model=schemas.ExportResponse)
+def do_export(body: schemas.ExportRequest, actor: str = Depends(auth)):
+    res = export_data.export_scope(body.scope)
+    return schemas.ExportResponse(**res)
+
+
+# ── Stage 7: erasures / episodes / vocab / temporal / admin ─────────────────
+# erasures
+@app.post("/v1/erasures/preview")
+def erasure_preview(body: schemas.ErasurePreviewRequest, actor: str = Depends(auth)):
+    return erasures.preview_erasure(scope=body.scope, selector=body.selector.model_dump(exclude_none=True))
+
+
+@app.get("/v1/erasures/preview/{preview_id}/manifest")
+def erasure_manifest(preview_id: str, actor: str = Depends(auth)):
+    mf = erasures.get_manifest(preview_id)
+    if not mf:
+        raise HTTPException(404, "preview not found")
+    if mf.get("expired"):
+        raise HTTPException(409, "manifest expired; re-run preview")
+    return mf
+
+
+@app.post("/v1/erasures")
+def erasure_execute(body: schemas.ErasureExecuteRequest, actor: str = Depends(auth)):
+    try:
+        return erasures.execute_erasure(scope=body.scope,
+                                        selector=body.selector.model_dump(exclude_none=True) if body.selector else None,
+                                        from_preview_id=body.from_preview_id)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.get("/v1/erasures/{erasure_id}")
+def erasure_status(erasure_id: str, actor: str = Depends(auth)):
+    st = erasures.get_erasure_status(erasure_id)
+    if not st:
+        raise HTTPException(404, "erasure not found")
+    return st
+
+
+@app.post("/v1/erasures/{erasure_id}/cancel")
+def erasure_cancel(erasure_id: str, actor: str = Depends(auth)):
+    ok = erasures.cancel_erasure(erasure_id)
+    return {"cancelled": ok}
+
+
+# episodes
+@app.get("/v1/episodes")
+def list_eps(scope: str, actor: str = Depends(auth)):
+    return {"items": episodes.list_episodes(scope)}
+
+
+@app.post("/v1/episodes/build")
+def build_eps(body: dict, actor: str = Depends(auth)):
+    scope = body.get("scope")
+    if not scope:
+        raise HTTPException(422, "scope required")
+    return episodes.segment_scope(scope)
+
+
+# vocab CRUD
+@app.post("/v1/vocabularies")
+def vocab_create(body: schemas.VocabCreateRequest, actor: str = Depends(auth)):
+    with session_scope() as conn:
+        vid = conn.execute(text("""
+            INSERT INTO vocabularies (scope, name, kind, description)
+            VALUES (:s,:n,:k,:d) RETURNING vocab_id
+        """), {"s": body.scope, "n": body.name, "k": body.kind, "d": f"vocab {body.name}"}).fetchone().vocab_id
+        for v in body.values:
+            conn.execute(text("""
+                INSERT INTO vocabulary_values (vocab_id, canonical_value, aliases)
+                VALUES (:v,:c,CAST(:a AS text[])) ON CONFLICT DO NOTHING
+            """), {"v": str(vid), "c": v.canonical, "a": "{" + ",".join(v.aliases) + "}"})
+    return {"vocab_id": str(vid), "scope": body.scope, "name": body.name, "kind": body.kind}
+
+
+@app.get("/v1/vocabularies")
+def vocab_list(scope: str, actor: str = Depends(auth)):
+    with session_scope() as conn:
+        rows = conn.execute(text("""
+            SELECT v.vocab_id::text, v.name, v.kind, v.description,
+                   coalesce(json_agg(json_build_object('canonical', vv.canonical_value, 'aliases', vv.aliases)) FILTER (WHERE vv.canonical_value IS NOT NULL), '[]') AS vals
+            FROM vocabularies v LEFT JOIN vocabulary_values vv ON vv.vocab_id=v.vocab_id
+            WHERE v.scope=:s GROUP BY v.vocab_id ORDER BY v.name
+        """), {"s": scope}).fetchall()
+    return {"items": [dict(vocab_id=r[0], name=r[1], kind=r[2], description=r[3], values=r[4]) for r in rows]}
+
+
+@app.get("/v1/vocabularies/{name}")
+def vocab_get(name: str, scope: str, actor: str = Depends(auth)):
+    with session_scope() as conn:
+        row = conn.execute(text("""
+            SELECT v.vocab_id::text, v.name, v.kind, v.description,
+                   coalesce(json_agg(json_build_object('canonical', vv.canonical_value, 'aliases', vv.aliases)) FILTER (WHERE vv.canonical_value IS NOT NULL), '[]') AS vals
+            FROM vocabularies v LEFT JOIN vocabulary_values vv ON vv.vocab_id=v.vocab_id
+            WHERE v.scope=:s AND v.name=:n GROUP BY v.vocab_id
+        """), {"s": scope, "n": name}).fetchone()
+    if not row:
+        raise HTTPException(404, "vocab not found")
+    return dict(vocab_id=row[0], name=row[1], kind=row[2], description=row[3], values=row[4])
+
+
+@app.put("/v1/vocabularies/{name}")
+def vocab_replace(name: str, body: schemas.VocabReplaceRequest, actor: str = Depends(auth)):
+    with session_scope() as conn:
+        row = conn.execute(text("SELECT vocab_id FROM vocabularies WHERE scope=:s AND name=:n"),
+                           {"s": body.scope, "n": name}).fetchone()
+        if not row:
+            raise HTTPException(404, "vocab not found")
+        if body.kind:
+            conn.execute(text("UPDATE vocabularies SET kind=:k WHERE vocab_id=:v"),
+                         {"k": body.kind, "v": str(row.vocab_id)})
+        conn.execute(text("DELETE FROM vocabulary_values WHERE vocab_id=:v"), {"v": str(row.vocab_id)})
+        for val in body.values:
+            conn.execute(text("""INSERT INTO vocabulary_values (vocab_id, canonical_value, aliases)
+                VALUES (:v,:c,CAST(:a AS text[]))"""), {"v": str(row.vocab_id), "c": val.canonical,
+                         "a": "{" + ",".join(val.aliases) + "}"})
+    return {"replaced": name}
+
+
+@app.delete("/v1/vocabularies/{name}")
+def vocab_delete(name: str, scope: str, actor: str = Depends(auth)):
+    with session_scope() as conn:
+        r = conn.execute(text("DELETE FROM vocabularies WHERE scope=:s AND name=:n"),
+                         {"s": scope, "n": name})
+    if not (r.rowcount or 0):
+        raise HTTPException(404, "vocab not found")
+    return {"deleted": name}
+
+
+# temporal phrases
+@app.post("/v1/temporal/phrases")
+def tphrase_create(body: schemas.TemporalPhraseRequest, actor: str = Depends(auth)):
+    temporal.seed_defaults()
+    pid = temporal.register_phrase(body.name, body.expression)
+    return {"phrase_id": pid, "name": body.name.lower(), "expression": body.expression}
+
+
+@app.get("/v1/temporal/phrases")
+def tphrase_list(actor: str = Depends(auth)):
+    temporal.seed_defaults()
+    return {"items": temporal.list_phrases()}
+
+
+@app.delete("/v1/temporal/phrases/{name}")
+def tphrase_delete(name: str, actor: str = Depends(auth)):
+    ok = temporal.delete_phrase(name)
+    if not ok:
+        raise HTTPException(404, "phrase not found")
+    return {"deleted": name}
+
+
+# admin
+@app.get("/v1/admin/metrics")
+def admin_metrics(scope: str = None, actor: str = Depends(auth)):
+    with session_scope() as conn:
+        def cnt(sql, **p):
+            return conn.execute(text(sql), p).scalar()
+        sc = scope or "%"
+        jobs = {}
+        for st in ("queued", "running", "completed", "failed"):
+            jobs[st] = cnt("SELECT count(*) FROM jobs WHERE scope LIKE :s AND status=:st", s=sc, st=st)
+        return {
+            "scope": scope, "events": cnt("SELECT count(*) FROM events WHERE scope LIKE :s", s=sc),
+            "facts": cnt("SELECT count(*) FROM facts WHERE scope LIKE :s AND recorded_to IS NULL", s=sc),
+            "beliefs": cnt("SELECT count(*) FROM beliefs WHERE scope LIKE :s AND recorded_to IS NULL", s=sc),
+            "entities": cnt("SELECT count(*) FROM entities WHERE scope LIKE :s AND merged_into IS NULL", s=sc),
+            "episodes": cnt("SELECT count(*) FROM episodes WHERE scope LIKE :s", s=sc),
+            "blobs": cnt("SELECT count(*) FROM blobs WHERE scope LIKE :s", s=sc),
+            "jobs_by_status": jobs,
+        }
+
+
+@app.get("/v1/admin/version")
+def admin_version(actor: str = Depends(auth)):
+    from cortex import __version__
+    with session_scope() as conn:
+        tables = conn.execute(text("SELECT count(*) FROM pg_tables WHERE schemaname='cortex'")).scalar()
+    return {"version": __version__, "schema_tables": tables}
+
+
+@app.post("/v1/admin/maintenance")
+def admin_maintenance(body: schemas.MaintenanceRequest, actor: str = Depends(auth)):
+    if body.action == "methylation":
+        return maint.methylation_run(body.scope, body.older_than_days or 30)
+    if body.action == "consolidation":
+        return maint.consolidation_run(body.scope)
+    raise HTTPException(422, "action must be methylation|consolidation")

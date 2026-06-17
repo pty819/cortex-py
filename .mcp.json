@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "cortex": {
+      "command": "uv",
+      "args": ["run", "--directory", ".", "python", "-m", "cortex.cli", "mcp"],
+      "env": {
+        "CORTEX_SCOPE": "org:acme/dept:sales/user:alice"
+      }
+    }
+  }
+}

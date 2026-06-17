@@ -1,0 +1,103 @@
+cortex-py 阶段 0 冒烟报告
+生成: 2026-06-18T04:21:22
+DB: 192.168.1.21:5432/postgres
+结果: PASS=37  FAIL=0  FILE_ERRORS=0
+
+==============================================================================
+>>> 判定: ALL GREEN ✅
+==============================================================================
+>>> RESET: DROP SCHEMA IF EXISTS cortex_stage0 CASCADE
+
+==============================================================================
+>>> 00_extensions.sql
+==============================================================================
+  extension "vector" already exists, skipping
+  extension "ltree" already exists, skipping
+  extension "pg_trgm" already exists, skipping
+  extension "unaccent" already exists, skipping
+  extension "pgcrypto" already exists, skipping
+
+==============================================================================
+>>> 01_schema.sql
+==============================================================================
+  schema "cortex_stage0" already exists, skipping
+  extension "vector" already exists, skipping
+  extension "ltree" already exists, skipping
+  extension "pg_trgm" already exists, skipping
+  extension "unaccent" already exists, skipping
+  extension "pgcrypto" already exists, skipping
+  extension "uuid-ossp" already exists, skipping
+  SCHEMA: 15 tables + 1 view + v3() helper created in cortex_stage0
+
+==============================================================================
+>>> 02_seed_data.sql
+==============================================================================
+  SEED: events=6 entities=8 facts=9 beliefs=1 blobs=2 vocab_values=3
+
+==============================================================================
+>>> 03_temporal_tests.sql
+==============================================================================
+  PASS: timeline has 3 versions
+  PASS: current value = signed
+  PASS: as_of 2026-03-01 = poc
+  PASS: as_of 2026-05-01 = close
+  PASS: live supersession → timeline now 4 versions
+  PASS: current value = churned after supersession
+  PASS: as_of 2026-05-15 still = signed (supersession preserves history)
+  PASS: as_known 2000 = 0 (system did not know yet)
+
+==============================================================================
+>>> 04_graph_traversal.sql
+==============================================================================
+  PASS: 2-hop BFS from Acme reaches 2 nodes: Priya Rao,Q3 Renewal
+  PASS: 3-hop BFS reaches same 2 nodes (graph converges)
+  PASS: predicate filter [owns] from Acme → 0 (Acme has no owns out-edge)
+  PASS: reverse lookup works_at Acme → 1 subject(s)
+  PERF: 2-hop BFS = 8.09 ms ; 3-hop BFS = 0.52 ms (seed graph; 10k-facts baseline in decision_probe: 5.47/6.94 ms)
+
+==============================================================================
+>>> 05_entity_resolution.sql
+==============================================================================
+  PASS: top-1 candidate = Robert Smith (cosine=0.9948)
+  PASS: A-layer alias exact match "Bob" → entity 11111111-0000-0000-0000-000000000010
+  (skips vector recall + LLM; first-line fast path)
+  PASS: Robert Jones → GRAYZONE(LLM) (0.3<cos<0.85, would call LLM)
+  PASS: merged dup excluded from active set
+  PASS: entities_resolved maps dup → Robert Smith (facts need not rewrite)
+
+==============================================================================
+>>> 06_scope_isolation.sql
+==============================================================================
+  PASS: deal_stage exists in BOTH scopes (independent graphs)
+  PASS: scope A cannot see scope B's "internal" deal_stage
+  PASS: same-name different-scope → 2 distinct entities (graph isolation holds)
+  PASS: holistic from alice → 3 prefixes, 8 facts (org+dept+user all visible)
+  PASS: descend from org:acme → 4 distinct scopes visible
+  PASS: structured view returns facts=9 beliefs=1 (events skipped) for scope A
+  PERF: holistic via TEXT ANY(prefix) = 0.199 ms ; ltree @> = 0.181 ms (decision: TEXT, holistic is the hot path)
+
+==============================================================================
+>>> 07_queue_demo.sql
+==============================================================================
+  PASS: 2 workers each grabbed a distinct job (SKIP LOCKED prevents duplicate)
+  PASS: highest-priority job (priority=99) grabbed first
+  PASS: not-yet-due job (run_after +1h) stays queued
+  PASS: visibility timeout reaper reset crashed job → queued
+  PASS: job at max_attempts → dead-letter (failed) with error
+
+==============================================================================
+>>> 08_blobs_vocab.sql
+==============================================================================
+  PASS: identical bytes dedup → blob_id blob_127cd0e61c921c8fa46b52b7380c1da08d46cd92ed695839b68d5a92519a3129 (count unchanged 2)
+  PASS: distinct bytes → new blob (count 2→3)
+  PASS: CLOSED vocab coerce (签约→signed, pitch→poc, expired→NULL, won→signed)
+  PASS: OPEN vocab coerce (unknown→kept feature, company→org)
+
+==============================================================================
+>>> 09_erasure_refcount.sql
+==============================================================================
+  PASS: event_refcount(EVT_5) = 1 (referenced by 1 fact)
+  PASS: refcount>0 → REDACTED (row kept, payload blanked, excluded_from_recall=true)
+  PASS: array_remove scrubbed EVT_5 from supporting fact.supports
+  PASS: refcount=0 → physically DELETED from WAL
+  PASS: blob refcount→0 → physically deleted (content-addressed cleanup)

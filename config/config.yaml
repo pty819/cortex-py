@@ -1,0 +1,85 @@
+# cortex 配置 — 三路 LLM + rerank + embedding 分段(依据 01-technical-decisions.md §配置)
+# ⚠️ llm.*.api_key 用占位符;真实 Minimax key 由用户提供后填入(或用 CORTEX_LLM_API_KEY 环境变量覆盖)。
+# 启动时强制校验:embedding.dimension 必须 == entities.embedding 的 vector(N)=1024,不一致拒启动。
+
+database:
+  # 经 localhost 代理(scripts/db_proxy.py,系统 python 跑)转发到 192.168.1.21:5432。
+  # 原因:macOS 本地网络授权挡住 uv 的 3.12 python 直连 .21;localhost 不受限。
+  # 启动顺序:先 `python3 scripts/db_proxy.py`,再起 app/worker。
+  url: postgresql://postgres:0prV2JrQ1uJSBHZ2@127.0.0.1:5433/postgres
+  schema: cortex
+
+embedding:
+  provider: jina
+  api_key: local
+  api_base: http://192.168.1.238:8000/v1        # 只到 /v1,端点路径由 worker 拼(/embeddings)
+  model: jina-embeddings-v5-text-small
+  dimension: 1024                                # ⚠️ 必须 == schema 里 vector(1024)
+  max_concurrent: 10
+  timeout: 60
+
+rerank:
+  provider: openai-compatible
+  api_key: local
+  api_base: http://192.168.1.238:8000/v1         # /rerank 由 worker 拼
+  model: prism-qwen3.5-reranker-0.8b-optiq-5bpw
+  threshold: 0.1                                 # 分数 < 此值丢弃(R2 实测:relevance 0-1,0.1 合理底线)
+  top_n: 25                                      # RERANK_POOL
+  timeout: 60
+
+llm:
+  extraction:
+    provider: openai-compatible
+    model: Minimax-M3
+    api_key: REPLACE_WITH_MINIMAX_KEY            # ← 用户提供;或 env CORTEX_LLM_EXTRACTION_API_KEY
+    api_base: https://api.minimaxi.com/v1
+    temperature: 0.0
+    timeout: 600
+    max_retries: 2
+    max_concurrent: 10
+    # R1 fallback 链:json_schema → json_object → 纯 prompt
+    structured_output_mode: json_schema          # json_schema | json_object | prompt
+  answer:
+    provider: openai-compatible
+    model: Minimax-M3
+    api_key: REPLACE_WITH_MINIMAX_KEY
+    api_base: https://api.minimaxi.com/v1
+    temperature: 0.0
+    timeout: 600
+    max_retries: 2
+  synthesis:
+    provider: openai-compatible
+    model: Minimax-M3
+    api_key: REPLACE_WITH_MINIMAX_KEY
+    api_base: https://api.minimaxi.com/v1
+    temperature: 0.0
+    timeout: 600
+    max_retries: 2
+  verifier:                                      # 可选,默认关
+    enabled: false
+    model: Minimax-M3
+    api_key: REPLACE_WITH_MINIMAX_KEY
+    api_base: https://api.minimaxi.com/v1
+
+api:
+  key: ""                                        # 静态 API key;留空 = 开发态不鉴权(仅本地)
+  cors_origins: ["http://localhost:5173", "http://localhost:4173"]
+
+worker:
+  poll_interval_secs: 1.0
+  visibility_timeout_secs: 300                   # 5min running → 重置 queued
+  reaper_interval_secs: 60
+  max_attempts: 3
+  backoff_base_secs: 4                           # 2^attempts
+
+retrieval:
+  top_k: 40                                      # RETRIEVAL_TOP_K(单 session)
+  rrf_k: 60.0                                    # RRF 平滑常数
+  graph_weight: 0.20
+  graph_max_hops: 2
+
+extraction:
+  embedding_text: "{name}. {description}"        # entity embedding 用 canonical_name + description
+  link_thresholds:
+    merge: 0.85
+    new: 0.30
