@@ -11,6 +11,41 @@ from sqlalchemy import text
 
 from .db import session_scope
 
+# ── 诊断场景因果 predicate 预置词表 ─────────────────────────────────────────
+DIAGNOSIS_PREDICATES = [
+    ("caused_by",   "故障由...引起"),
+    ("led_to",      "...导致"),
+    ("symptom_of",  "是...的症状"),
+    ("affects",     "...影响"),
+    ("part_of",     "...是...的组成部分"),
+    ("has_component", "...包含"),
+    ("has_symptom", "...表现为"),
+    ("repaired_by", "...被...修复"),
+    ("observed_by", "...被...发现"),
+    ("preceded_by", "...发生在...之后(时序)"),
+]
+
+def seed_diagnosis_vocab(scope: str) -> int:
+    """预置诊断场景因果 predicate 闭合词表(幂等)。返回新增值数。"""
+    n = 0
+    with session_scope() as conn:
+        row = conn.execute(text("""
+            INSERT INTO vocabularies (scope, name, kind, description)
+            VALUES (:s, 'predicate', 'closed', 'Diagnosis causal predicates')
+            ON CONFLICT (scope, name) DO NOTHING RETURNING vocab_id
+        """), {"s": scope}).fetchone()
+        if not row:  # 已存在,取 id
+            row = conn.execute(text("SELECT vocab_id FROM vocabularies WHERE scope=:s AND name='predicate'"),
+                               {"s": scope}).fetchone()
+        if row:
+            for pred, desc in DIAGNOSIS_PREDICATES:
+                r = conn.execute(text("""
+                    INSERT INTO vocabulary_values (vocab_id, canonical_value, aliases)
+                    VALUES (:v, :c, '{}') ON CONFLICT (vocab_id, canonical_value) DO NOTHING
+                """), {"v": str(row.vocab_id), "c": pred})
+                n += r.rowcount or 0
+    return n
+
 
 def methylation_run(scope: str, older_than_days: int = 30) -> Dict[str, Any]:
     with session_scope() as conn:

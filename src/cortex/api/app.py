@@ -216,7 +216,7 @@ def beliefs_why(belief_id: str, actor: str = Depends(auth)):
                     ev = c.execute(text("SELECT content->>'text' FROM events WHERE event_id=CAST(:e AS uuid)"),
                                    {"e": eid}).fetchone()
                     if ev:
-                        nodes.append({"id": eid, "type": "event", "weight": 1.0, "summary": (ev[0] or "")[:120]})
+                        nodes.append({"id": eid, "type": "event", "weight": 1.0, "summary": (ev[0] or "")})  # 不截:保留完整事件文本便于溯源
                         edges.append({"from": fid, "to": eid, "relation": "extracted_from"})
     # narrative
     narrative, nmodel = "", "mock"
@@ -420,6 +420,31 @@ def do_export(body: schemas.ExportRequest, actor: str = Depends(auth)):
     return schemas.ExportResponse(**res)
 
 
+# ── 长文档切块入库(机械结构等)─────────────────────────────────────────────
+@app.post("/v1/ingest/document")
+def ingest_document(body: schemas.IngestDocumentRequest, actor: str = Depends(auth)):
+    """长文档切块 → 每块一条 experience(带 path/heading context)→ 异步抽取。
+    机械结构文档按标题切,块间靠 part_of 抽取自然连接。"""
+    from ..chunking import chunk_document
+    chunks = chunk_document(body.text, min_chars=body.min_chars, max_chars=body.max_chars)
+    if not chunks:
+        raise HTTPException(422, "empty document after chunking")
+    items = []
+    for i, c in enumerate(chunks):
+        # 块文本带标题前缀,让 LLM 知道当前层级
+        prefix = f"# {c['path']}\n" if c.get("path") else ""
+        items.append({
+            "scope": body.scope,                    # ← 修复:bulk_ingest 需要 scope 字段
+            "modality": "document",
+            "content": {"kind": "text", "text": prefix + c["text"]},
+            "context": {"intent": body.intent, "labels": [c.get("heading", "")] if c.get("heading") else [],
+                        "chunk_path": c.get("path", ""), "chunk_depth": c.get("depth", 0)},
+            "idempotency_key": f"doc-{uuid.uuid4().hex[:12]}-{i}",
+        })
+    res = ingest.bulk_ingest(scope=body.scope, items=items, source="document", caller=actor)
+    return {"chunks": len(chunks), **res}
+
+
 # ── Stage 7: erasures / episodes / vocab / temporal / admin ─────────────────
 # erasures
 @app.post("/v1/erasures/preview")
@@ -481,7 +506,9 @@ def vocab_create(body: schemas.VocabCreateRequest, actor: str = Depends(auth)):
     with session_scope() as conn:
         vid = conn.execute(text("""
             INSERT INTO vocabularies (scope, name, kind, description)
-            VALUES (:s,:n,:k,:d) RETURNING vocab_id
+            VALUES (:s,:n,:k,:d)
+            ON CONFLICT (scope, name) DO UPDATE SET kind=EXCLUDED.kind, description=EXCLUDED.description
+            RETURNING vocab_id
         """), {"s": body.scope, "n": body.name, "k": body.kind, "d": f"vocab {body.name}"}).fetchone().vocab_id
         for v in body.values:
             conn.execute(text("""

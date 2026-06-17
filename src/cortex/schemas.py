@@ -326,3 +326,12 @@ class MaintenanceRequest(BaseModel):
     action: str        # methylation | consolidation
     scope: str
     older_than_days: Optional[int] = 30
+
+
+class IngestDocumentRequest(BaseModel):
+    """长文档切块入库(机械结构等有标题章节的文档)。"""
+    scope: str
+    text: str
+    intent: str = "structure"     # structure | diagnosis | general
+    min_chars: int = 200
+    max_chars: int = 2000

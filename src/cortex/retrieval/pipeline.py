@@ -212,7 +212,7 @@ def recall(*, scope: str, query: Optional[str] = None, view: str = "local",
                     raw = services.llm_chat("synthesis",
                         "写一段假设性回答(假设记忆里有答案),纯文本无前缀。",
                         query)
-                    hypo = services.strip_think(raw)[:500]
+                    hypo = services.strip_think(raw)  # 不截断:假设段落本就该完整,长查询需要长假设
                     extra_embs.append(services.embed_one(hypo))
             except Exception:  # noqa: BLE001
                 pass
@@ -384,7 +384,7 @@ def _assemble_pack(conn, scope, view, query, fact_rows, t, ch_counts,
         while len(facts_out) > 1 and _est({"events": events, "facts": facts_out, "beliefs": beliefs}) > max_tokens:
             facts_out.pop()
     # context_block
-    cb = _context_block(query, facts_out, beliefs, citation_mode)
+    cb = _context_block(query, facts_out, beliefs, citation_mode, budgets=budgets)
 
     pack_id = "pack_" + uuid.uuid4().hex[:24]
     # citations 按 citation_mode
@@ -412,12 +412,17 @@ def _assemble_pack(conn, scope, view, query, fact_rows, t, ch_counts,
     return pack
 
 
-def _context_block(query, facts, beliefs, citation_mode="inline_with_markers") -> str:
+def _context_block(query, facts, beliefs, citation_mode="inline_with_markers", budgets=None) -> str:
     if not facts:
         return "(无相关记忆)"
+    # token 预算:留 30% 给 LLM 生成的叙述,70% 填证据。无预算默认填 12 条(保守上限,非硬截)
+    from ..token_budget import fit_to_budget, estimate_tokens
+    max_ctx = (budgets or {}).get("max_tokens")
+    ctx_budget = int(max_ctx * 0.7) if max_ctx else None
+    facts_in = fit_to_budget(facts, ctx_budget) if ctx_budget else facts[:12]
     if services.llm_configured("synthesis"):
         try:
-            payload = json.dumps({"facts": facts[:8], "beliefs": beliefs[:3]})
+            payload = json.dumps({"facts": facts_in, "beliefs": beliefs[:5]})
             raw = services.llm_chat("synthesis",
                                      "用引用标记[n]把给定事实串成一段中文综述,只输出综述本身。",
                                      payload)

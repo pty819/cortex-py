@@ -113,17 +113,31 @@ def extract_event(event_id: str) -> Dict[str, Any]:
         """), {"e": event_id}).fetchone()
         if not ev:
             return {"error": "event not found"}
-        text_body = ev.content.get("text") if isinstance(ev.content, dict) else None
+
+        # ── content.kind="triple":前置 agent 已产出结构化三元组 → 直写,不经 LLM ──
+        content = ev.content if isinstance(ev.content, dict) else {}
+        if content.get("kind") == "triple":
+            res = _direct_write_triple(conn, ev.scope, content.get("triple", {}),
+                                       ev.observed_at, event_id, thresholds)
+            emit_lifecycle(conn, kind="extracted", scope=ev.scope, event_id=event_id,
+                           payload={"facts_extracted": res["facts_extracted"], "model": "triple-direct"})
+            return {**res, "model": "triple-direct"}
+
+        text_body = content.get("text") or (content.get("message") if isinstance(content.get("message"), str) else None)
+        if content.get("kind") == "message":
+            text_body = content.get("text")
         if not text_body:
-            # 非 message/text 类:跳过结构化抽取
+            # 非文本且非 triple:跳过
             emit_lifecycle(conn, kind="extracted", scope=ev.scope, event_id=event_id,
                            payload={"facts_extracted": 0, "note": "non-text content, skipped"})
             return {"facts_extracted": 0, "model": "skip", "reason": "non-text"}
 
-        # 抽取:真 LLM or mock
+        # 抽取:真 LLM or mock;按 intent 选 prompt(诊断类用因果词表)
+        intent = (ev.context or {}).get("intent") if isinstance(ev.context, dict) else None
+        is_diagnosis = intent in ("diagnosis", "incident_retrospective", "structure")
         if services.llm_configured("extraction"):
             try:
-                extraction = _llm_extract(text_body)
+                extraction = _llm_extract(text_body, is_diagnosis=is_diagnosis)
                 model = cfg.llm.extraction.model
             except Exception as e:  # noqa: BLE001
                 extraction = services.mock_extract(text_body)
@@ -268,12 +282,50 @@ _SYS = ("Extract knowledge-graph triples from the text. Output JSON {entities:[{
         "subject/object names must match entity names verbatim. Be concise.")
 
 
-def _llm_extract(text_body: str) -> Dict[str, Any]:
-    """真实 LLM 抽取 + R1 fallback 链:json_schema → json_object → prompt → 健壮解析。"""
+# ── triple 直写(前置 agent 产出的结构化三元组,零损失)──────────────────────
+def _direct_write_triple(conn, scope: str, triple: Dict[str, Any], observed_at,
+                         event_id: str, thresholds) -> Dict[str, Any]:
+    """content.kind=triple → 直接建 entity + fact,不经 LLM。
+    triple = {subject:{name}, predicate, object:{name}, valid_from?, confidence?}"""
+    if not triple or not triple.get("subject") or not triple.get("predicate"):
+        return {"facts_extracted": 0, "entities": 0, "error": "incomplete triple"}
+    sub_name = triple["subject"].get("name") or triple["subject"].get("id")
+    obj_name = (triple.get("object") or {}).get("name") or (triple.get("object") or {}).get("id")
+    pred = triple["predicate"]
+    if not sub_name or not obj_name:
+        return {"facts_extracted": 0, "entities": 0, "error": "missing subject/object name"}
+    # 实体链接(复用 B over C)
+    sid = _resolve_or_create(conn, scope, sub_name, triple["subject"].get("type"),
+                             sub_name, thresholds, "triple-direct")
+    oid = _resolve_or_create(conn, scope, obj_name, (triple.get("object") or {}).get("type"),
+                             obj_name, thresholds, "triple-direct")
+    pred = coerce_value(conn, scope, "predicate", pred) or pred  # 词表归一
+    vf = triple.get("valid_from") or (observed_at.isoformat() if hasattr(observed_at, "isoformat") else str(observed_at))
+    _close_superseded(conn, scope, sid, pred, vf)
+    fid = _insert_fact(conn, scope=scope, subject_id=sid, predicate=pred,
+                       object_type="entity", object_entity_id=oid, object_value=None,
+                       valid_from=vf, confidence=triple.get("confidence", 0.9),
+                       supports=[event_id], model="triple-direct")
+    return {"facts_extracted": 1, "entities": 2, "fact_ids": [fid]}
+
+
+def _llm_extract(text_body: str, is_diagnosis: bool = False) -> Dict[str, Any]:
+    """真实 LLM 抽取 + R1 fallback 链:json_schema → json_object → prompt → 健壮解析。
+    is_diagnosis=True 时用因果词表 prompt(机械故障诊断场景)。"""
     cfg = load_config().llm.extraction
-    sys_msg = ("Extract knowledge-graph triples from the text. Output ONLY a JSON object "
-               "{entities:[{name,type,description}], facts:[{subject,predicate,object,object_type}]}. "
-               "subject/object names must match entity names verbatim. No prose, no thinking tags.")
+    if is_diagnosis:
+        sys_msg = (
+            "从机械故障诊断文本抽取因果三元组。predicate 必须用因果词表之一:"
+            "caused_by, led_to, symptom_of, affects, part_of, has_component, has_symptom, "
+            "repaired_by, observed_by, preceded_by。"
+            "subject/object 是实体(故障/部件/人/症状/措施),名字须与文本一致。"
+            "输出 JSON {entities:[{name,type,description}], facts:[{subject,predicate,object,object_type,confidence}]}。"
+            "object_type 为 entity(实体引用)或 literal(字面值如温度/型号)。保留完整因果链,不要遗漏。"
+        )
+    else:
+        sys_msg = ("Extract knowledge-graph triples from the text. Output ONLY a JSON object "
+                   "{entities:[{name,type,description}], facts:[{subject,predicate,object,object_type}]}. "
+                   "subject/object names must match entity names verbatim. No prose, no thinking tags.")
 
     attempts = []
     modes = []
