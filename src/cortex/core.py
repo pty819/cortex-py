@@ -151,6 +151,69 @@ def emit_lifecycle(conn, *, kind: str, scope: str, event_id: Optional[str] = Non
     return str(row.lifecycle_id)
 
 
+# ── ?wait= 同步阻塞 ─────────────────────────────────────────────────────────
+import psycopg2
+import threading
+
+_STAGE_ORDER = {"captured": 0, "extracted": 1, "indexed": 2, "consolidated": 3}
+
+
+def wait_for_stage(event_id: str, target_stage: str, timeout: float = 30.0) -> Dict[str, Any]:
+    """阻塞直到该 event 出现目标 stage 的 lifecycle 事件,或超时。用独立连接 LISTEN/轮询。
+    target_stage: captured|indexed|consolidated。indexed 对应 extracted/indexed;consolidated 对应 consolidated。
+    返回 {reached, stages_completed, elapsed_ms}。超时 reached=False(降级 async)。"""
+    import time as _t
+    cfg = load_config()
+    t0 = _t.time()
+    target_kinds = {"captured": ["captured"], "indexed": ["extracted", "indexed"],
+                    "consolidated": ["consolidated"]}.get(target_stage, [])
+    # 先查已有(可能已处理完)
+    with session_scope() as c:
+        done = [r[0] for r in c.execute(text(
+            "SELECT kind FROM lifecycle_events WHERE event_id=CAST(:e AS uuid) ORDER BY ts"),
+            {"e": event_id}).fetchall()]
+        if any(k in target_kinds for k in done):
+            return {"reached": True, "stages_completed": done,
+                    "elapsed_ms": int((_t.time() - t0) * 1000)}
+    # LISTEN 独立连接(autocommit)
+    conn = psycopg2.connect(cfg.database.url)
+    conn.autocommit = True
+    try:
+        conn.execute("LISTEN cortex_lc")
+        while _t.time() - t0 < timeout:
+            # 优先查表(通知可能已积压)
+            with session_scope() as c:
+                done = [r[0] for r in c.execute(text(
+                    "SELECT kind FROM lifecycle_events WHERE event_id=CAST(:e AS uuid) ORDER BY ts"),
+                    {"e": event_id}).fetchall()]
+                if any(k in target_kinds for k in done):
+                    return {"reached": True, "stages_completed": done,
+                            "elapsed_ms": int((_t.time() - t0) * 1000)}
+            # 等 notify(最多 1s)
+            import select as _sel
+            _sel.select([conn], [], [], 1.0)
+            conn.notices  # drain
+            try:
+                conn.poll()
+                while conn.notifies:
+                    n = conn.notifies.pop()
+                    if "|" in n.payload:
+                        kind, eid = n.payload.split("|", 1)
+                        if eid == event_id and kind in target_kinds:
+                            with session_scope() as c:
+                                done = [r[0] for r in c.execute(text(
+                                    "SELECT kind FROM lifecycle_events WHERE event_id=CAST(:e AS uuid) ORDER BY ts"),
+                                    {"e": event_id}).fetchall()]
+                            return {"reached": True, "stages_completed": done,
+                                    "elapsed_ms": int((_t.time() - t0) * 1000)}
+            except Exception:
+                pass
+        return {"reached": False, "stages_completed": [], "elapsed_ms": int((_t.time() - t0) * 1000),
+                "note": "timeout, downgraded to async"}
+    finally:
+        conn.close()
+
+
 def list_lifecycle_since(conn, *, scope: Optional[str] = None, event_id: Optional[str] = None,
                          since: Optional[str] = None, limit: int = 100):
     sql = "SELECT lifecycle_id::text, kind, ts::text, scope, event_id::text, payload FROM lifecycle_events WHERE 1=1"
