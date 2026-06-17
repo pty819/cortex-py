@@ -1,0 +1,214 @@
+Graph Memory - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Facts + beliefs form a queryable knowledge graph; walk it via /v1/facts and /v1/beliefs/why.
+Graph Memory
+In CortexDB v1 the knowledge graph is not a separate layer — it's an emergent view of the 
+Facts
+ layer (triple-shaped, bi-temporal assertions) plus the 
+Beliefs
+ layer (probabilistic claims with a 
+supports
+ graph). Every fact is an edge; every belief is a node with a walkable evidence trail.
+How it's built
+You capture an experience via 
+POST /v1/experience
+.
+The async extraction pipeline (
+Lifecycle
+) parses entities + atomic facts from the content and writes them into the Facts layer.
+The consolidator periodically promotes correlated facts into Beliefs, each carrying a 
+supports: [fact_id, …]
+ list pointing back at the evidence.
+You can also write facts directly via an experience envelope whose 
+content.kind = "triple"
+:
+client.experience(
+ scope="org:acme/dept:eng",
+ modality="observation",
+ content_kind="triple",
+ triple={
+ "subject": {"kind": "entity", "id": "ent_payments_service"},
+ "predicate": "uses",
+ "object": {"kind": "entity", "id": "ent_cockroachdb", "name": "CockroachDB"},
+ },
+ observed_at="2026-05-16T10:42:00Z",
+ idempotency_key="link-payments-cockroachdb",
+)
+Query the graph
+Facts about a subject:
+facts = client.facts(
+ scope="org:acme/dept:eng",
+ subject="ent_payments_service",
+ min_confidence=0.6,
+)
+for f in facts["items"]:
+ print(f"{f['subject']['name']} {f['predicate']} {f['object']['value']} (conf {f['confidence']})")
+The supersession chain for a 
+(subject, predicate)
+ pair — what value did the system hold, when, and based on which events:
+timeline = client.fact_timeline(
+ scope="org:acme/dept:eng",
+ subject="ent_payments_service",
+ predicate="api_protocol",
+)
+for row in timeline["timeline"]:
+ print(f" {row['value']:>10} valid: {row['valid_from']} → {row['valid_to'] or 'now'}")
+Walk a belief's evidence
+GET /v1/beliefs/why?belief_id=…
+ returns the full support graph for one belief — every fact, episode, and event that contributed, plus a narrative rendering of the reasoning.
+trail = client.belief_why(belief_id="belief_01HX...")
+print(trail["narrative"])
+# "I think the payments service runs on CockroachDB because on May 13 the team
+# shipped the migration (fact_01HX), following a positive POC episode (ep_01HX)
+# in April. Signal weight 0.62, CI [0.48, 0.74]."
+for node in trail["support_graph"]["nodes"]:
+ print(f" [{node['type']}] {node['id']} weight={node.get('weight', '-')}")
+Graph-aware recall
+POST /v1/recall
+ automatically walks the graph when it improves retrieval. The returned pack carries the contributing facts + beliefs in their respective layers, and every citation in 
+pack.provenance.citations
+ points to a specific fact / belief / event ID you can resolve later.
+pack = client.recall(
+ scope="org:acme/dept:eng",
+ query="What runs the payments service?",
+ view="holistic",
+ include=["facts", "beliefs", "episodes"],
+)
+print(pack["context_block"])
+for marker, cite in pack["provenance"]["citations"].items():
+ print(f" {marker} → {cite['layer']}:{cite['id']}")
+See also
+The five memory layers
+ — where facts and beliefs sit in the derivation graph
+GET /v1/facts
+ + 
+/facts/timeline
+GET /v1/beliefs
+ + 
+/beliefs/why
+Bi-temporal queries

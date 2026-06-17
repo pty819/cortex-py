@@ -1,0 +1,196 @@
+Security - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+High-level security guidance for teams deploying CortexDB in controlled environments.
+Enterprise Security
+Security for CortexDB should be planned the same way you plan security for other
+stateful application infrastructure: around identity, network boundaries,
+storage controls, auditing, and operational responsibility.
+This page focuses on those deployment considerations at a public, high level.
+Authentication and access
+Applications typically authenticate to CortexDB using bearer credentials.
+curl https://api-v1.cortexdb.ai/v1/recall \
+ -H "Authorization: Bearer your-api-key"
+For production use, teams should define:
+how application credentials are issued and rotated
+which services and operators are allowed to access CortexDB
+how tenant, workspace, or environment boundaries are enforced in application use
+Encryption and transport protection
+Teams should follow their organization’s standards for:
+encrypting sensitive data according to policy
+protecting secrets and service credentials
+terminating TLS or applying network-layer encryption
+restricting access to trusted networks and workloads
+Tenant governance
+Many teams use CortexDB in multi-tenant or multi-workspace environments.
+In those cases, security planning should include:
+clear tenant scoping in applications and integrations
+environment separation for development, staging, and production
+least-privilege access for services that read or write memory
+review paths for retention, deletion, and data handling requirements
+Auditability
+Production deployments should make memory operations observable and reviewable.
+That usually means capturing:
+who or what system accessed the service
+what action was performed
+which tenant or workspace was affected
+whether the operation succeeded or failed
+See 
+Audit Trail
+ for the broader governance view.
+Compliance planning
+If you are operating in a regulated environment, CortexDB should be deployed as
+part of your broader compliance program rather than as a standalone exception.
+Typical topics to review include:
+data residency requirements
+retention and deletion policies
+incident response and audit evidence
+vendor and provider controls when external AI services are used
+Shared responsibility
+Security posture depends on deployment model.
+Focus on application identity, access, and usage policy.
+Plan for networking, secrets, storage, monitoring, and operational procedures.
+Deployment profiles and live validation
+CortexDB deployment posture is also shaped by deployment profile policy gates:
+startup
+growth
+enterprise
+custom
+Operators can verify the effective gates with
+GET /v1/admin/enterprise/status
+ and can run the repository's live Docker
+validation matrix locally with:
+python tests/live/run_docker_live_suite.py
+Next Steps
+Deployment Profiles
+Verify which controls are allowed for each deployment tier.
+Audit Trail
+Review governance and audit-oriented workflows.
+Backups & DR
+Review backup targets, PITR, and operational recovery settings.
+Multi-Tenancy
+Learn about tenant-aware memory organization.

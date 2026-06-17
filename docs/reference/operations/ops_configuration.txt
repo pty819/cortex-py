@@ -1,0 +1,488 @@
+Configuration Foundations - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+How CortexDB resolves configuration: the cortex.toml file, environment variables, CLI flags, precedence rules, and reload semantics.
+Configuration Foundations
+This page covers the 
+mechanics
+ — where files live, what overrides what, and what happens on reload. For tuning advice, see the per-subsystem pages.
+Resolution order
+When the 
+cortexdb
+ binary starts, configuration is resolved in this order. 
+Each step overrides the previous.
+Compiled defaults.
+ Defined in 
+cortex-config/src/lib.rs
+ as 
+default_*()
+ functions. These are what you get with zero config.
+<data_dir>/cortex.toml
+.
+ Loaded by 
+LiveConfig::from_file()
+ at startup. Missing fields fall back to compiled defaults; missing file falls back to all defaults with a warning logged.
+Environment variables.
+ Read inline by each subsystem on first use. Most overrides are honored at startup; a handful (recall-tuning knobs) are read per-request.
+CLI flags.
+ Used only for cluster topology (
+--node-id
+, 
+--rpc-addr
+, 
+--gossip-addr
+, 
+--seed-nodes
+, 
+--rf
+, 
+--port
+, 
+--data-dir
+, 
+--peers
+). There is no CLI flag that duplicates a TOML field or env var.
+The 
+data_dir
+ itself is resolved from the second positional CLI argument (or 
+--data-dir=
+ in cluster mode), defaulting to 
+cortexdb_data
+ in single-node mode and 
+cortexdb_data_{node_id}
+ in cluster mode. Once 
+data_dir
+ is known, the config file is always read from 
+<data_dir>/cortex.toml
+.
+The cortex.toml file
+Location
+<data_dir>/cortex.toml
+This means changing your data directory also moves the config file. If you point at a fresh 
+data_dir
+, you'll get pristine defaults — useful for repeatable benchmarks, surprising for operators.
+Schema
+The full schema is in 
+cortex-config/src/lib.rs
+. The 14 top-level sections are:
+Section
+Purpose
+[cluster]
+Node identity, peer set, replication factor, vnodes
+[storage]
+Data path, WAL sync mode, disk watermarks
+[engine]
+RocksDB cache, HNSW shape, vector dims, quantization
+[network]
+API / gossip / gRPC ports, request timeouts
+[llm]
+Default LLM provider, model, fallback chain
+[governance]
+Retention, PII handling, audit logging
+[scheduler]
+Background job intervals (compaction / methylation / drain)
+[blob_store]
+Local / S3 / GCS / Azure blob backend + KMS
+[content_processors]
+Image / audio / video / document / sensor handlers
+[security]
+Encryption, TLS/mTLS, RBAC, rate limits, breach detection, field masking
+[compliance]
+Data residency, consent, classification, DSAR, SIEM, cross-agent
+[deployment]
+Profile preset + per-feature gate overrides
+Every field uses 
+serde(default = "...")
+, so 
+partial files are valid
+ — you only need to specify what you want to change. This is the file used to produce 93.8% on LongMemEval-S:
+# cortexdb_data_server/cortex.toml — the benchmark override file
+[cluster]
+node_id = 1
+[storage]
+[engine]
+[network]
+[llm]
+[governance]
+[scheduler]
+enabled = false
+Empty sections mean "use all defaults for this section." The only non-default field is 
+scheduler.enabled = false
+ — required because background compaction pollutes the vector index over long bench runs.
+Validation
+LiveConfig::from_file()
+ returns a 
+ConfigError::ValidationError
+ if a field is out of range. Examples that will refuse to start:
+engine.vector_dimensions
+ not in 
+{256, 384, 512, 768, 1024, 1536, 3072}
+engine.hnsw_m
+ outside 
+[4, 64]
+storage.max_disk_usage_percent > 100
+cluster.replication_factor == 0
+scheduler.compaction_interval_secs < 30
+A bad config file fails fast at startup rather than silently using defaults. Watch the logs on first boot.
+Reload semantics
+cortex.toml
+ is read 
+once at startup
+. There is no SIGHUP reload. To change a TOML field you must restart the binary. This is intentional — most fields (
+vector_dimensions
+, 
+data_path
+, cluster topology) cannot be safely changed at runtime.
+For tunables you 
+do
+ want to change without restart, use the environment-variable overrides documented in 
+Recall Tuning
+. Those are read on the request path.
+Environment variables
+Roughly 100 variables exist, grouped by prefix. The high-level convention:
+Prefix
+Subsystem
+Examples
+CORTEX_LOG_*
+Logging
+CORTEX_LOG_FORMAT=json
+CORTEX_EMBEDDING_*
+Embeddings
+CORTEX_EMBEDDING_MODEL
+, 
+CORTEX_EMBEDDING_DIMS
+CORTEX_LLM_*
+Entity-extraction LLM
+CORTEX_LLM_MODEL=gpt-4o-mini
+CORTEX_ANSWER_*
+Answer-generation LLM
+CORTEX_ANSWER_MODEL=claude-opus-4-6
+CORTEX_VERIFIER_*
+Optional answer verifier
+CORTEX_VERIFIER_MODEL=gpt-4.1
+CORTEX_ENRICHMENT_*
+Async KG enrichment LLM
+CORTEX_ENRICHMENT_MODEL=
+ (off by default)
+CORTEX_BLOB_*
+Blob storage backend
+CORTEX_BLOB_PROVIDER=s3
+CORTEX_IMAGE_*
+, 
+CORTEX_AUDIO_*
+, etc.
+Content modality processors
+CORTEX_AUDIO_MODEL=whisper-1
+CORTEX_RERANKER_*
+Cross-encoder reranker
+CORTEX_RERANKER_PROVIDER=cohere
+CORTEX_*_DISABLE
+Kill switches
+CORTEX_SCHEDULER_DISABLE=1
+CORTEX_METHYLATION_*
+, 
+CORTEX_CONSOLIDATION_*
+Memory evolution thresholds
+CORTEX_METHYLATION_MIN_ACCESS=10
+CORTEX_GRAPH_RETRIEVAL_*
+, 
+CORTEX_MULTIHOP_*
+, 
+CORTEX_HYDE_*
+Recall-strategy tuning
+CORTEX_GRAPH_RETRIEVAL_TOP_K=40
+CORTEX_SYNC_*
+Synchronous-pipeline kill switches
+CORTEX_SYNC_FACT_EXTRACT_DISABLE=1
+CORTEX_MS_*
+Multi-session executor flags
+CORTEX_MS_EVIDENCE_PACK_DISABLE=1
+A handful of env vars use the underlying ecosystem's name rather than 
+CORTEX_*
+:
+OPENAI_API_KEY
+ — used as the embedding key when no provider-specific key is set
+ANTHROPIC_API_KEY
+ — fallback for 
+CORTEX_ANSWER_API_KEY
+ when provider is 
+anthropic
+COHERE_API_KEY
+ — used when 
+CORTEX_EMBEDDING_PROVIDER=cohere
+LLM_API_KEY
+ — generic fallback when no provider-specific key is set
+RUST_LOG
+ — picked up by 
+tracing_subscriber
+ (overrides the default 
+cortexdb=info,...
+ filter)
+Boolean conventions
+Boolean env vars accept 
+1
+ / 
+0
+, 
+true
+ / 
+false
+ (case-insensitive). Empty or unset means default. Most boolean knobs are 
+kill switches
+ — they start in the "feature on" state and you set 
+=1
+ to disable. Examples: 
+CORTEX_LLM_DISABLE
+, 
+CORTEX_SCHEDULER_DISABLE
+, 
+CORTEX_GRAPH_RETRIEVAL_DISABLE
+, 
+CORTEX_MS_EVIDENCE_PACK_DISABLE
+.
+The exceptions — features that start 
+off
+ and you opt into — include 
+CORTEX_AUTO_ROUTE
+, 
+CORTEX_COMPOSITIONAL_ENABLE
+, 
+CORTEX_ENTITY_VECTOR_SEED_ENABLE
+, 
+CORTEX_ENUMERATE_COUNT_ENABLE
+. The 
+_ENABLE
+ suffix is the giveaway.
+CLI flags
+Only 10 flags exist, all about cluster topology. Single-node operators don't need any of them — 
+cortexdb
+ with no arguments binds the v1 API on port 3141 and writes to 
+./cortexdb_data
+.
+Single-node mode
+cortexdb [PORT] [DATA_DIR]
+Two positional args. Both optional.
+# All defaults: API on 3141, data in ./cortexdb_data
+cortexdb
+# Custom port, custom data dir
+cortexdb 4000 /var/lib/cortexdb
+In single-node mode, the legacy API surface (kept for back-compat with bench scripts) binds to 
+127.0.0.1:<PORT+1>
+ — by default 
+127.0.0.1:3142
+. Override with 
+CORTEX_LEGACY_API_ADDR
+ if you need to expose it externally.
+Cluster mode
+Trigger by passing 
+--node-id
+, 
+--rpc-addr
+, and 
+--gossip-addr
+ together. All other flags become available:
+cortexdb \
+ --node-id=1 \
+ --rpc-addr=10.0.0.1:7100 \
+ --gossip-addr=10.0.0.1:7000 \
+ --seed-nodes=10.0.0.1:7000,10.0.0.2:7000,10.0.0.3:7000 \
+ --rf=3 \
+ --port=3141 \
+ --data-dir=/data/cortex/node1
+Flag
+Required?
+Default
+What it does
+--node-id=N
+Yes (cluster)
+—
+Unique 
+u64
+ for this node. Must be stable across restarts.
+--rpc-addr=HOST:PORT
+Yes (cluster)
+—
+Internal RPC bind address for inter-node calls.
+--gossip-addr=HOST:PORT
+Yes (cluster)
+—
+UDP gossip / membership bind address.
+--seed-nodes=A,B,C
+Yes (cluster)
+—
+Comma-separated peers to contact for cluster join.
+--peers=ID:HOST:PORT,...
+No
+—
+Alternative explicit peer list (with ids).
+--rf=N
+No
+3
+Replication factor — number of copies per partition.
+--port=PORT
+No
+3141
+V1 API bind port (
+0.0.0.0:PORT
+).
+--data-dir=DIR
+No
+cortexdb_data_{node_id}
+RocksDB + cortex.toml location.
+All four required flags must be present together to trigger cluster mode. If any one is missing, the binary silently falls back to single-node mode and you get a one-machine cluster that ignores the other flags. Watch the startup logs for 
+"Cluster mode"
+ vs 
+"Single-node mode"
+ to confirm.
+See 
+Storage & Cluster
+ for the full cluster operations guide.
+Inspecting what's actually loaded
+On startup, CortexDB logs the resolved scheduler config:
+scheduler configuration loaded
+ enabled=true
+ compaction_interval_secs=300
+ methylation_interval_secs=600
+ cognitive_persist_interval_secs=60
+ feedback_weight_interval_secs=120
+For everything else, use the health and config endpoints:
+# Basic health + version
+curl http://localhost:3141/v1/admin/health
+# Full effective config (admin scope required)
+curl http://localhost:3141/v1/admin/config \
+ -H "Authorization: Bearer $TOKEN" \
+ -H "X-Cortex-Actor: $ACTOR"
+The 
+/v1/admin/config
+ response shows the resolved values after defaults + file + env are merged — useful for confirming an env var actually took effect rather than being silently ignored.
+Next steps
+Profiles & Presets
+ — copy-paste configs for common deployments
+Embeddings
+ — pick a model and tune cost
+Recall Tuning
+ — make queries faster or more accurate

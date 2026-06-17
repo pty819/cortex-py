@@ -1,0 +1,261 @@
+Audit Trail - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Tamper-evident audit logging for every policy decision, write, and forget.
+Audit Trail
+CortexDB logs every API operation and every policy decision into an append-only, SHA-256-chained audit log. The log is always-on (no flag to disable) and exposed via three endpoints under 
+/v1/audit
+.
+For the endpoint shapes, see the 
+Audit API reference
+.
+What's logged
+Every request produces an 
+AuditRow
+:
+Field
+Description
+id
+UUID of the audit row
+ts
+When the request was decided
+actor
+Caller's ActorId (e.g. 
+user:alice
+, 
+service:slack-connector
+)
+token_jti
+The PASETO token's 
+jti
+ claim (for revocation correlation)
+tenant_id
+Tenant binding from the token's 
+aud
+ claim
+scope
+Hierarchical scope path the request targeted
+endpoint
+HTTP path (e.g. 
+/v1/experience
+, 
+/v1/forget
+)
+capability
+The capability the request required
+decision
+allow
+ or 
+deny
+decided_by_tier
+Which policy tier decided: 
+deployment
+, 
+tenant
+, 
+scope
+, or 
+actor
+request
+Body SHA-256 + safe metadata (no raw secrets)
+response_status
+HTTP status code returned
+event_id
+Event written, if any
+client_ip
+Remote address
+request_id
+The same 
+X-Cortex-Request-ID
+ returned in the response
+elapsed_ms
+Wall-clock processing time
+gdpr
+true
+ if this row is part of a GDPR workflow (
+/v1/erasures
+, 
+/v1/admin/dsar
+)
+Denials are first-class — every 
+deny
+ row cites both the tier and the missing capability, so there are no opaque 403s.
+Querying the audit log
+audit = client.audit_list(
+ actor="user:alice",
+ capability="forget.gdpr",
+ decision="deny",
+ limit=100,
+)
+for row in audit["items"]:
+ print(f"{row['ts']} {row['endpoint']} → {row['decision']} "
+ f"(by {row['decided_by_tier']}: {row['capability']})")
+curl "https://api-v1.cortexdb.ai/v1/audit?actor=user:alice&capability=forget.gdpr&decision=deny&limit=100" \
+ -H "Authorization: Bearer $CORTEX_TOKEN" \
+ -H "X-Cortex-Actor: $CORTEX_ACTOR"
+Fetch a single row:
+row = client.audit_row("audit_01HX...")
+Tamper checks
+POST /v1/audit/verify
+ lets external auditors confirm an audit row hasn't been altered. Pass the row ID plus the exact body you have on file; the server recomputes the SHA-256 chain and reports a match.
+result = client.audit_verify(
+ audit_id="audit_01HX...",
+ body="<canonicalized JSON of the row you have>",
+)
+print(result["match"], result["algorithm"])
+# True sha256
+match: false
+ doesn't necessarily mean tampering — it can also indicate the canonical JSON differs (use the body you fetched from 
+GET /v1/audit/{id}
+ verbatim).
+Streaming changes via lifecycle
+Audit rows are also surfaced as 
+policy_changed
+ / 
+policy_revoked
+ events on the 
+lifecycle stream
+, so you can plug your SIEM into the SSE stream rather than polling.
+SIEM drain (enterprise / experimental)
+POST /v1/admin/siem/drain
+ initiates a one-shot flush of pending audit rows to a configured SIEM endpoint (syslog or JSON). Useful for batch shipping during maintenance windows. Stability: 
+experimental
+.
+Configuration
+Variable
+Default
+Notes
+CORTEX_AUDIT_RETENTION_DAYS
+365
+Rows older than this are pruned by a background job
+CORTEX_AUDIT_INCLUDE_BODY_HASH
+true
+Records SHA-256 of the request body for tamper checks
+CORTEX_AUDIT_SIEM_ENDPOINT
+(none)
+If set, audit rows are mirrored to this endpoint in real time
+All audit rows are kept on the same RocksDB column family used for events, so backups + PITR cover the audit log too.

@@ -1,0 +1,357 @@
+POST /v1/experience - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Capture an experience into CortexDB. Replaces /v1/remember and /v1/episodes.
+POST /v1/experience
+The single write endpoint. Captures one 
+experience
+ — a structured envelope describing something an actor said, did, observed, or imported — and queues it for async indexing, fact extraction, belief revision, and understanding synthesis.
+For batch ingest (≤1000 items / call) use 
+POST /v1/experience/bulk
+. For larger volumes use 
+POST /v1/import/jsonl
+.
+Capability
+scope.write
+ (or 
+scope.write.elevated
+ when writing above the actor's natural level).
+Headers
+Authorization: Bearer <PASETO v4 public token>
+X-Cortex-Actor: user:alice
+Content-Type: application/json
+Request body — the Experience Envelope
+{
+ "scope": "org:acme/dept:eng/user:alice",
+ "modality": "conversation",
+ "content": {
+ "kind": "message",
+ "role": "user",
+ "text": "Just got off a call with Priya at Acme."
+ },
+ "context": {
+ "observed_at": "2026-05-15T10:42:00Z",
+ "labels": ["acme"],
+ "intent": "deal_status_update"
+ },
+ "idempotency_key": "alice-chat-001"
+}
+Field
+Type
+Required
+Notes
+scope
+string
+yes
+Hierarchical 
+type:id/type:id/...
+ path. See 
+Scopes
+.
+modality
+string
+yes
+One of 
+conversation
+, 
+document
+, 
+tool_result
+, 
+observation
+, 
+feedback
+, 
+imported
+. Unknown values stored verbatim but don't trigger structured extraction.
+content
+object
+yes
+Discriminated union on 
+kind
+ — see below.
+context
+object
+yes
+observed_at
+ (RFC 3339) + optional 
+source_recorded_at
+, 
+location
+, 
+preceded_by[]
+, 
+intent
+, 
+labels[]
+.
+observed_actor
+object
+no
+Who 
+performed
+ the experience. Defaults to caller. If different, requires 
+scope.write.on_behalf_of
+.
+subject
+object
+no
+Who/what the memory is 
+about
+. Defaults to 
+observed_actor
+. If different, requires 
+scope.write.about_other
+.
+directives
+object
+no
+Per-call overrides — 
+extract[]
+, 
+consolidate_into
+, 
+confidence_floor
+, 
+ttl_for_belief_layer
+, 
+embed
+.
+idempotency_key
+string
+yes
+≤ 64 chars. Repeated calls with the same key + same body are deduplicated. Same key + different body → 409.
+Content kinds
+{ "kind": "message", "role": "user|assistant|tool|system", "text": "...", "media": [{ "blob_id": "blob_...", "alt": "screenshot" }] }
+{ "kind": "text", "text": "..." }
+{ "kind": "json", "data": { ... } }
+{ "kind": "blob_ref","blob_id": "blob_..." }
+{ "kind": "triple", "triple": { "subject": {...}, "predicate": "...", "object": {...} } }
+Sync via 
+?wait=
+By default writes are async and return 
+202 Accepted
+ as soon as the WAL append succeeds. Opt into synchronous behaviour with 
+?wait=
+:
+Value
+Returns when
+Typical latency
+(omitted)
+WAL append
+~5 ms (202)
+captured
+WAL fsync
+~10 ms (200)
+indexed
+BM25 + HNSW insert
+~100–500 ms (200)
+consolidated
+Beliefs/Understanding touched
+~500–3000 ms (200)
+Response — async (default)
+HTTP/1.1 202 Accepted
+X-Cortex-Policy: tier=scope; decision=allow; capability=scope.write
+X-Cortex-Stability: stable
+{
+ "event_id": "evt_01HX...",
+ "status": "captured",
+ "wal_offset": 134892,
+ "lifecycle_stream": "/v1/lifecycle/stream?event_id=evt_01HX..."
+}
+Response — sync (
+?wait=indexed
+)
+{
+ "event_id": "evt_01HX...",
+ "status": "indexed",
+ "wal_offset": 134892,
+ "stages_completed": ["captured", "extracted", "indexed"],
+ "derives": ["fact_01HX...", "belief_01HX..."],
+ "elapsed_ms": { "capture": 4, "extract": 410, "index": 88 }
+}
+Errors
+HTTP
+error_code
+When
+401
+actor_mismatch
+X-Cortex-Actor
+ header doesn't match token 
+sub
+403
+policy_denied
+Capability missing — response cites tier + capability
+409
+idempotency_conflict
+Same key, different body
+422
+invalid_envelope
+Validation failed — 
+details.field
+ + 
+details.reason
+503
+wal_unavailable
+WAL not writable (rare; disk pressure)
+POST /v1/experience/bulk
+Ingest up to 
+1000 items
+ per call. Always returns 202; resolve per-item outcomes by subscribing to the lifecycle stream or polling 
+/v1/experience/by-idempotency-key/{key}
+.
+{
+ "scope": "org:acme/dept:eng/user:alice",
+ "items": [
+ { "modality": "conversation", "content": { ... }, "context": { ... }, "idempotency_key": "k1" },
+ { "modality": "conversation", "content": { ... }, "context": { ... }, "idempotency_key": "k2" }
+ ],
+ "ordering": "strict_temporal"
+}
+Field
+Type
+Notes
+items
+array
+≤ 1000 envelope items
+ordering
+enum
+strict_temporal
+ (default — preserve 
+observed_at
+ order, slower) or 
+batch_throughput
+ (out-of-order allowed).
+directives
+object
+Applied to every item unless the item has its own.
+Response:
+{
+ "batch_id": "batch_01HX...",
+ "accepted": 1000,
+ "lifecycle_stream": "/v1/lifecycle/stream?batch_id=batch_01HX..."
+}

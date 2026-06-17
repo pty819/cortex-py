@@ -1,0 +1,201 @@
+Admin - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Operational introspection: health, metrics, version, layer scheduler stats.
+Admin Endpoints
+Operational visibility. Health is unauthenticated; everything else requires 
+diagnostics.read
+.
+GET /v1/admin/health
+Unauthenticated. Liveness + readiness.
+{
+ "status": "healthy",
+ "storage": "ok",
+ "uptime_secs": 5104320,
+ "version": "1.0.0-rc1"
+}
+status
+ ∈ 
+{ healthy, degraded, unhealthy }
+. Returns 
+503
+ when unhealthy.
+GET /v1/admin/metrics
+Prometheus-style scrape (text) by default; pass 
+?format=json
+ for a JSON snapshot.
+HTTP/1.1 200 OK
+Content-Type: text/plain; version=0.0.4
+Counters include 
+cortex_experience_total
+, 
+cortex_recall_total
+, 
+cortex_recall_latency_ms
+, 
+cortex_pack_size_tokens
+, 
+cortex_forget_total
+, 
+cortex_erasure_events_deleted_total
+, plus per-layer + per-capability splits.
+GET /v1/admin/version
+{
+ "version": "1.0.0-rc1",
+ "git_sha": "...",
+ "built_at": "2026-05-15T10:00:00Z",
+ "stability_tiers": {
+ "stable": 42,
+ "beta": 18,
+ "experimental": 12
+ }
+}
+GET /v1/admin/layers/stats — Experimental
+Per-tenant snapshot of the auto-layer scheduler. Returns when 
+CORTEX_V1_LAYERS_AUTO=1
+ is set; otherwise an empty snapshot.
+{
+ "snapshot_at": "2026-05-15T10:42:00Z",
+ "per_tenant": {
+ "acme": {
+ "events_per_min": 42,
+ "extract_lag_p95_ms": 312,
+ "consolidate_lag_p95_ms": 1812,
+ "synthesize_lag": "P1D",
+ "queue_depth": 14
+ }
+ }
+}
+Maintenance — Experimental
+POST /v1/admin/compact # RocksDB compaction nudge
+POST /v1/admin/flush-views # Flush in-memory view caches
+POST /v1/scopes/prune # Garbage-collect auto-provisioned scopes
+All 
+X-Cortex-Stability: experimental
+. Require operator-tier capability; deny by default in 
+cloud_managed
+.

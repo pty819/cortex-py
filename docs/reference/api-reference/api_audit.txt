@@ -1,0 +1,197 @@
+Audit - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Tamper-evident audit log of every policy decision, write, and forget.
+Audit
+Every policy decision, write, and forget produces an 
+audit row
+. The audit log is append-only and SHA-256-chained — 
+POST /v1/audit/verify
+ lets external auditors confirm a row hasn't been tampered with.
+GET /v1/audit
+GET /v1/audit
+ ?actor=user:alice
+ &capability=forget.gdpr
+ &decision=allow
+ &limit=100
+Query param
+Notes
+actor
+Filter by actor ID
+capability
+Filter by capability name
+decision
+allow
+ or 
+deny
+endpoint
+Filter by endpoint path
+since
+ / 
+until
+RFC 3339 time bounds
+Response
+{
+ "items": [
+ {
+ "id": "audit_01HX...",
+ "ts": "2026-05-15T10:42:09Z",
+ "actor": "user:alice",
+ "token_jti": "...",
+ "tenant_id": "acme",
+ "scope": "org:acme/dept:eng/user:alice",
+ "endpoint": "/v1/experience",
+ "capability": "scope.write",
+ "decision": "allow",
+ "decided_by_tier": "scope",
+ "request": { "body_sha256": "..." },
+ "response_status": 202,
+ "event_id": "evt_01HX...",
+ "client_ip": "203.0.113.42",
+ "request_id": "req_01HX...",
+ "elapsed_ms": 4,
+ "gdpr": false
+ }
+ ]
+}
+GET /v1/audit/
+Single audit row.
+POST /v1/audit/verify
+Confirm an audit row hasn't been tampered with. Pass the row ID and the exact body you have on file; the server recomputes the hash and reports a match.
+{
+ "audit_id": "audit_01HX...",
+ "body": "<canonicalized JSON of the row>"
+}
+Response
+{
+ "match": true,
+ "algorithm": "sha256"
+}
+match: false
+ doesn't mean tampering — it can also mean canonicalization differs (use the body you got from 
+GET /v1/audit/{id}
+ verbatim).

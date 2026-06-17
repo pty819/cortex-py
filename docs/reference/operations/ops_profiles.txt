@@ -1,0 +1,620 @@
+Profiles & Presets - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Six copy-paste configurations — Benchmark / Voice / Batch / Cost / Enterprise / Quickstart — for the most common CortexDB deployment shapes.
+Profiles & Presets
+Each profile below is a complete config you can copy into your environment. We mark every one as either:
+Benchmark-validated
+ — we ran this exact configuration on a public benchmark and reproduced the published result.
+Principled
+ — derived from the source code of the recall pipeline and our internal tuning, but not validated on a published benchmark. Likely good; not proven.
+When in doubt, start with 
+Self-host quickstart
+, then move toward whichever profile matches your workload as you understand it.
+1. Benchmark-validated (LongMemEval-S, 93.8%)
+Use this if
+ you want to reproduce our published numbers or evaluate a head-to-head against another memory layer.
+Status:
+ Benchmark-validated. This is the exact configuration that scored 469/500 on LongMemEval-S as published in 
+the benchmark paper
+.
+<data_dir>/cortex.toml
+[cluster]
+node_id = 1
+[storage]
+[engine]
+[network]
+[llm]
+[governance]
+[scheduler]
+enabled = false
+Environment variables
+export OPENAI_API_KEY=sk-... # for embeddings + extraction
+export ANTHROPIC_API_KEY=sk-ant-... # for answer generation
+export CORTEX_EMBEDDING_MODEL=text-embedding-3-small
+export CORTEX_EMBEDDING_DIMS=1536
+export CORTEX_ANSWER_PROVIDER=anthropic
+export CORTEX_ANSWER_MODEL=claude-opus-4-6
+What's intentional:
+scheduler.enabled = false
+ — background compaction merges chunks and emits summary-style entries (prefixed 
+C:
+ and 
+P:
+) that pollute the top-K over long runs. On the 150-question bench (~100 min) this collapsed single-session-assistant recall to 0/25.
+text-embedding-3-small
+ (1536 d) over 
+text-embedding-3-large
+ (3072 d) — the larger model gives ~+0.4pp on LongMemEval-S at ~3× the cost; we shipped the small model as the published config because the win didn't justify the cost ratio.
+claude-opus-4-6
+ over 
+gpt-4o
+ — Opus 4.6 was +6.2pp on multi-session reasoning in our internal A/B (the LongMemEval-S category that dominates total error).
+Cost per 150-question run, defaults:
+ roughly $1.20 in embeddings + $4.50 in Claude answer calls = ~$6.
+A note on the five layers
+Some readers ask whether enabling "all five memory layers" boosts the benchmark number. The five layers — 
+Events, Episodes, Facts, Beliefs, Understanding
+ — are 
+always
+ materialized; there is no opt-in flag for them. The 93.8% LongMemEval-S result above already uses every layer.
+What 
+is
+ opt-in is the 
+depth and quality of each stage
+ — larger embedding model, cross-encoder reranker, async KG enrichment, verifier, wider HNSW shape, more HyDE passages, more multihop queries. Stacking those on top of the Benchmark config is what the next profile does.
+2. Max-Recall (every opt-in feature on)
+Use this if
+ you want the highest possible recall accuracy, money and latency are not constraints, and you understand the cost.
+Status:
+ Principled, not benchmark-validated as a bundle. We have per-component ablation deltas (each opt-in feature was A/B'd individually against the Benchmark baseline) but we have not run the full stack on a public benchmark. Plausible gain over 93.8%: 
++1 to +3 pp
+. We don't know exactly, and we won't pretend we do.
+<data_dir>/cortex.toml
+[cluster]
+node_id = 1
+[storage]
+data_path = "/data/cortex"
+wal_sync = true
+[engine]
+vector_dimensions = 3072 # match text-embedding-3-large
+hnsw_m = 32 # default 16 — wider graph
+hnsw_ef_construction = 500 # default 200 — better-built index
+hnsw_ef_search = 200 # default 100 — bigger query candidate pool
+hnsw_quantization = "None" # default ScalarU8 — keep f32, no quantization loss
+block_cache_bytes = 34359738368 # 32 GB — keep more index pages hot
+[network]
+[llm]
+[governance]
+[scheduler]
+enabled = false # same as Benchmark — preserve index stability
+Environment variables
+# Auth
+export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-ant-...
+export COHERE_API_KEY=... # reranker
+# Bigger embedding model
+export CORTEX_EMBEDDING_MODEL=text-embedding-3-large
+export CORTEX_EMBEDDING_DIMS=3072
+# Strongest answer model (default) + verifier on every question type
+export CORTEX_ANSWER_PROVIDER=anthropic
+export CORTEX_ANSWER_MODEL=claude-opus-4-6
+export CORTEX_ANSWER_USE_VERIFIER=1
+export CORTEX_ANSWER_VERIFIER_TYPES=single-session-user,single-session-assistant,multi-session,open-domain
+export CORTEX_VERIFIER_MODEL=gpt-4.1
+export CORTEX_VERIFIER_MAX_TOKENS=16384
+# Reranker on (Cohere rerank-v3.5)
+export CORTEX_RERANKER_PROVIDER=cohere
+export CORTEX_RERANKER_MODEL=rerank-v3.5
+# Async KG enrichment on (deeper cross-session entity resolution)
+export CORTEX_ENRICHMENT_MODEL=gpt-4o
+export CORTEX_ENRICHMENT_URL=https://api.openai.com/v1
+# Stronger entity extractor on the write path
+export CORTEX_LLM_MODEL=gpt-4o # default gpt-4o-mini
+# More HyDE passages for multi-session (covers more semantic angles)
+export CORTEX_HYDE_PASSAGES_MS=3 # default 1
+export CORTEX_HYDE_MULTIQUERY_DISABLED_TYPES= # empty = HyDE on for every type
+# Wider multihop planning
+export CORTEX_MULTIHOP_QUERY_COUNT=6 # default 4
+export CORTEX_MULTIHOP_MAX_QUERY_FANOUT=8 # default 5
+export CORTEX_MULTIHOP_QUERY_PLANNER_TYPES=single-session-user,single-session-assistant,multi-session,open-domain
+# Larger graph retrieval pool
+export CORTEX_GRAPH_RETRIEVAL_TOP_K=80 # default 40 single / 120 MS
+# Entity-vector seeding (extra channel — query-entity vectors as additional seeds)
+export CORTEX_ENTITY_VECTOR_SEED_ENABLE=1
+# Fact-aware ranking
+export CORTEX_FACT_EVENT_PROMOTION_ENABLE=1
+export CORTEX_FACT_VALIDITY_FILTER=1
+# Bias toward recently-accessed memories slightly more
+export CORTEX_SALIENCE_WEIGHT=0.15 # default 0.10
+# Memory-evolution: keep both consolidation flags conservative so we don't
+# lose detail to background pruning during a long eval
+export CORTEX_METHYLATION_INACTIVITY_HOURS=720 # 30 days (default 7)
+export CORTEX_CONSOLIDATION_MIN_AGE_HOURS=168 # 7 days (default 1)
+What each addition contributes
+Addition
+Expected delta vs Benchmark
+Cost multiplier
+Latency cost
+text-embedding-3-large
+ (3072d)
+~+0.4 pp
+~3× embedding bill
+~+20 ms / embed
+Cohere reranker
+~+1.5–2 pp on noisy sets
++$0.001 / recall
++80–200 ms / recall
+Verifier on every type
+~+0.3–0.8 pp (catches hallucinations)
++1 LLM call / answer
++800–1500 ms / answer
+Async enrichment (
+gpt-4o
+)
+~+0.5–1 pp on multi-session
+~+10× write LLM cost
+Async — no read latency
+gpt-4o
+ entity extractor
+Marginal on benchmark; helps long-tail
+~+10× extraction cost
++50 ms / write
+HyDE 3 passages on every type
+~+0.3–0.6 pp on phrasing-mismatch queries
++2 LLM calls / recall
++400–800 ms / recall
+Multihop count 6, fanout 8
+~+0.5–1.2 pp on multi-session
++2 LLM calls / recall
++400–1000 ms / recall
+HNSW M=32, ef_search=200, no quantization
+~+0.5 pp
+~3× index memory
+~+30 ms / recall
+Entity-vector seeding
+~+0.2–0.5 pp on entity-rich queries
+Negligible
++10–30 ms / recall
+Fact promotion + validity filter
+~+0.2 pp; sometimes hurts
+Negligible
+Negligible
+The deltas above don't add cleanly.
+ Some interact constructively (reranker + bigger pool); some are anticorrelated (HyDE multipass + multihop both generate variants — one of them is usually enough). Our internal expectation is roughly 
++1 to +3 pp over 93.8% on LongMemEval-S
+ with this full bundle, but until we run it formally, that's a range, not a number.
+Cost per 150-question LongMemEval-S run with this profile:
+ roughly $35–60 vs the ~$6 for the Benchmark profile. Most of the cost is in the verifier (one extra Opus-class call per answer), the enrichment pipeline (gpt-4o on every write), and the larger embeddings.
+When to use it
+You're competing on a leaderboard and you want to push past the published number.
+Your workload is high-value-per-query (legal, medical, expert assistance) and accuracy is worth 5–10× cost.
+You're running an internal eval and you want to know the ceiling of what your CortexDB instance can produce.
+When NOT to use it
+Anything realtime / voice — the extra LLM round-trips put p50 into seconds.
+Cost-sensitive deployments — 10× cost for ~2 pp is a bad trade in most production economics.
+Reproducibility — the published 93.8% is the Benchmark profile. If you're comparing to that number, use the Benchmark profile.
+3. Voice / Realtime (sub-100ms recall p50)
+Use this if
+ you're building a voice agent, a coding assistant doing many recalls per turn, or any agent where every millisecond shows up in user-perceived latency.
+Status:
+ Principled. We tuned this against the recall pipeline structure (every disabled stage removes a network round-trip or LLM call from the request path). Not benchmarked against a public latency dataset.
+<data_dir>/cortex.toml
+[cluster]
+node_id = 1
+[storage]
+data_path = "/var/lib/cortexdb"
+wal_sync = false # accept WAL durability gap for write latency
+[engine]
+hnsw_ef_search = 60 # default 100 — smaller = faster, ~0.5pp recall loss
+block_cache_bytes = 17179869184 # 16 GB — keep more index pages hot
+[network]
+request_timeout_ms = 3000 # default 10000 — fail fast
+[scheduler]
+enabled = true
+enrichment_drain_interval_secs = 5 # consume async results aggressively
+Environment variables
+# Same auth as default
+export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-ant-...
+# Smaller, faster embedding model
+export CORTEX_EMBEDDING_MODEL=text-embedding-3-small
+export CORTEX_EMBEDDING_DIMS=1536
+# Skip the reranker (~80-200ms saved per recall)
+export CORTEX_RERANKER_PROVIDER= # empty = disable
+# Skip HyDE multiquery on hot paths
+export CORTEX_HYDE_MULTIQUERY_DISABLED_TYPES=single-session-user,single-session-assistant,multi-session,open-domain
+# Skip multihop planning (saves 1-3 LLM round-trips)
+export CORTEX_MULTIHOP_QUERY_PLANNER_TYPES= # empty = disable for all
+# Tighter graph retrieval
+export CORTEX_GRAPH_RETRIEVAL_TOP_K=20
+# Skip synchronous fact extraction on write — keep all extraction async
+export CORTEX_SYNC_FACT_EXTRACT_DISABLE=1
+export CORTEX_SYNC_GRAPH_SEED_DISABLE=1
+Tradeoffs:
+Saved:
+ Reranker (~80–200 ms), HyDE multiquery (~150–400 ms LLM call), multihop planner (~200–600 ms × N queries), synchronous fact extraction (~100–300 ms on the write path).
+Lost:
+ ~1–3 percentage points of recall accuracy. The graph and reranker exist for a reason — they catch the long-tail of recall failures. Voice agents typically tolerate this because the user can re-ask.
+WAL durability:
+wal_sync = false
+ means up to ~10 ms of writes can be lost on a hard crash. Acceptable for voice (the user just said it; if you lose it, they'll say it again). Not acceptable for financial/compliance workloads.
+4. Batch / High Throughput
+Use this if
+ you're bulk-ingesting historical data, building a memory layer from a CRM dump, or running a nightly ETL of agent transcripts.
+Status:
+ Principled. Optimizes for writes-per-second over per-request latency.
+<data_dir>/cortex.toml
+[cluster]
+node_id = 1
+[storage]
+data_path = "/var/lib/cortexdb"
+wal_sync = true # keep durability — batch writes are usually one-shot
+[engine]
+block_cache_bytes = 34359738368 # 32 GB — large cache absorbs index churn
+[scheduler]
+enabled = true
+# Stretch all intervals — compaction can wait until ingest pauses
+compaction_interval_secs = 1800 # 30 min (default 5 min)
+methylation_interval_secs = 3600 # 1 hour (default 10 min)
+enrichment_drain_interval_secs = 60 # 1 min (default 30 s)
+cognitive_persist_interval_secs = 600 # 10 min (default 1 min)
+feedback_weight_interval_secs = 1800 # 30 min (default 2 min)
+Environment variables
+export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-ant-...
+# Large embedding batches — pack each OpenAI call
+export CORTEX_EMBEDDING_MAX_BATCH_ITEMS=4096 # default 2048
+export CORTEX_EMBEDDING_RETRY_ATTEMPTS=3 # be patient with 429s
+export CORTEX_EMBEDDING_RETRY_BASE_DELAY_MS=1000
+# Skip the synchronous write-path stages — let the async pipeline catch up
+export CORTEX_SYNC_FACT_EXTRACT_DISABLE=1
+export CORTEX_SYNC_GRAPH_SEED_DISABLE=1
+# Use the cheap fact-extractor model (writes don't need Opus)
+export CORTEX_LLM_MODEL=gpt-4o-mini
+# Use the bulk endpoint
+# POST /v1/experience/bulk with up to 100 events per request
+Tradeoffs:
+Saved:
+ ~80% wall-clock on a 1M-event ingest by batching embeddings and deferring sync extraction.
+Lost:
+ Recall on the first 30 minutes of ingested data is degraded until the async pipeline catches up (you'll see chunks indexed but facts not yet extracted). For batch ingest into a system that won't be queried during ingest, this is free; for live ingest into a hot system, it matters.
+API ratelimits:
+CORTEX_EMBEDDING_MAX_BATCH_ITEMS=4096
+ will push you against OpenAI's 1M-token-per-batch limit on 
+text-embedding-3-small
+. The client splits automatically when that happens, but you'll see retries; tune down if your logs fill with 413s.
+5. Cost-Optimized (free-tier and prototypes)
+Use this if
+ you're a solo dev or doing exploration, and you want every API call to be the cheapest option that still works.
+Status:
+ Principled. We've used this internally for early prototypes; it's not benchmarked.
+<data_dir>/cortex.toml
+[cluster]
+node_id = 1
+[storage]
+data_path = "./cortexdb_data"
+[engine]
+block_cache_bytes = 2147483648 # 2 GB — small enough to fit on a laptop
+[scheduler]
+enabled = true # keep on — keeps the index lean
+Environment variables
+export OPENAI_API_KEY=sk-... # cheapest provider for embeddings
+# Cheapest embedding model
+export CORTEX_EMBEDDING_MODEL=text-embedding-3-small # $0.02 per 1M tokens
+export CORTEX_EMBEDDING_DIMS=1536
+# Use the cheap GPT model for everything LLM-shaped
+export CORTEX_LLM_MODEL=gpt-4o-mini # entity extraction
+export CORTEX_ANSWER_PROVIDER=openai
+export CORTEX_ANSWER_MODEL=gpt-4o-mini # answers ($0.15/1M in)
+# Disable every optional pipeline stage
+export CORTEX_LLM_DISABLE= # leave on — needed for KG
+export CORTEX_ENRICHMENT_MODEL= # leave empty = disabled
+export CORTEX_RERANKER_PROVIDER= # disable reranker (no cost saved unless cohere)
+export CORTEX_HYDE_PASSAGES_MS=1 # minimum HyDE passages
+export CORTEX_MULTIHOP_QUERY_COUNT=2 # fewer multihop queries (default 4)
+export CORTEX_ANSWER_USE_VERIFIER= # disable answer verifier
+export CORTEX_ANSWER_VERIFIER_TYPES= # empty = no verifier on any type
+Estimated monthly cost for a hobby project
+ (100 K stored memories, 1 K recalls/day):
+Embeddings: ~$0.50/month (one-time + occasional re-embed)
+Entity extraction (gpt-4o-mini): ~$2/month
+Answer (gpt-4o-mini): ~$3/month
+Total: ~$6/month.
+ Pricier than running Ollama locally; cheaper than Mem0/Zep.
+To go truly free
+ (no API costs), swap the embedding service to a local Ollama:
+export CORTEX_EMBEDDING_URL=http://localhost:11434
+export CORTEX_EMBEDDING_MODEL=nomic-embed-text
+export CORTEX_EMBEDDING_DIMS=768
+# Set engine.vector_dimensions = 768 in cortex.toml to match
+Expect ~5pp recall loss vs OpenAI embeddings — fine for prototypes.
+6. Enterprise / Compliance
+Use this if
+ you're deploying into a regulated environment: HIPAA, SOC 2 Type II, GDPR, PCI, or any context where the auditor asks "where is the data, who can read it, and prove it."
+Status:
+ Principled — the security/compliance schema lights up the controls auditors look for. We have not formally certified against any specific regime.
+<data_dir>/cortex.toml
+[cluster]
+node_id = 1
+replication_factor = 3
+[storage]
+data_path = "/data/cortex"
+wal_sync = true
+[engine]
+hnsw_quantization = "ScalarU8" # save memory; encrypt-at-rest handles the rest
+[network]
+api_port = 3141
+gossip_port = 7000
+grpc_port = 9042
+[governance]
+default_retention_ttl_secs = 2592000 # 30 days — auto-expire raw events
+max_retention_secs = 220752000 # 7 years (default)
+pii_detection = true
+pii_handling = "Block" # reject events if PII scanner is down
+audit_logging = true
+[security]
+[security.encryption]
+enabled = true
+key_file = "/etc/cortexdb/keys/master.key"
+key_rotation_interval_secs = 7776000 # 90 days
+blob_store_sse_kms = true
+[security.tls]
+api_tls_enabled = true
+cert_path = "/etc/cortexdb/tls/cert.pem"
+key_path = "/etc/cortexdb/tls/key.pem"
+ca_cert_path = "/etc/cortexdb/tls/ca.pem"
+mtls_enabled = true # require client certs on internal RPC
+min_tls_version = "1.3"
+[security.rbac]
+enabled = true
+default_role = "reader"
+oidc_issuer = "https://login.acme.com/"
+oidc_audience = "cortexdb"
+require_mfa = true
+[security.rate_limit]
+enabled = true
+default_rpm = 600 # 10 RPS per actor
+default_rpd = 50000
+burst = 20
+[security.breach_detection]
+enabled = true
+max_failed_auth = 5
+auth_window_secs = 300
+lockout_duration_secs = 3600
+[blob_store]
+provider = "s3"
+bucket = "acme-cortex-blobs"
+region = "us-east-1"
+s3_encryption_type = "aws:kms"
+s3_kms_key_id = "arn:aws:kms:us-east-1:123:key/abc"
+s3_bucket_key_enabled = true
+[compliance]
+[compliance.data_residency]
+enabled = true
+allowed_regions = ["us-east-1", "us-west-2"] # block writes to other regions
+[compliance.consent]
+require_consent = true
+default_purposes = ["customer_support"]
+[compliance.classification]
+auto_classify = true
+default_sensitivity = "internal"
+auto_redact_above = "confidential"
+[compliance.dsar]
+enabled = true # /v1/erasures honored
+[compliance.siem]
+enabled = true
+format = "cef"
+webhook_urls = ["https://siem.acme.com/ingest"]
+batch_size = 100
+flush_interval_secs = 30
+[deployment]
+profile = "enterprise"
+Environment variables
+# Use customer-managed keys for everything that supports it
+export CORTEX_EMBEDDING_API_KEY=... # separate from OPENAI_API_KEY
+export CORTEX_ANSWER_API_KEY=...
+export CORTEX_VERIFIER_API_KEY=...
+# Audit-verify every answer (slower but defensible)
+export CORTEX_ANSWER_USE_VERIFIER=1
+export CORTEX_ANSWER_VERIFIER_TYPES=single-session-user,single-session-assistant,multi-session,open-domain
+export CORTEX_VERIFIER_MODEL=gpt-4.1
+# Log in JSON so your SIEM can parse without grok
+export CORTEX_LOG_FORMAT=json
+What you get:
+ Encryption-at-rest with key rotation, TLS 1.3 + mTLS on RPC, OIDC with MFA, per-actor rate limits, audit log on every event, automatic PII detection (blocking on scanner failure), 30-day default retention with auto-expire, S3 with KMS encryption, data-residency enforcement, SIEM forwarding in CEF format, DSAR 
+/v1/erasures
+ endpoint enabled.
+See 
+Security & Compliance
+ for a per-field walkthrough.
+7. Self-host quickstart (5-min Docker)
+Use this if
+ you just want to try CortexDB and decide later whether to tune it.
+Status:
+ Validated — this is the configuration in the 
+self-host blog post
+ and what 
+docker run cortexdb/cortexdb:latest
+ gives you out of the box.
+docker run -d \
+ --name cortexdb \
+ -p 3141:3141 \
+ -v cortexdb-data:/data \
+ -e OPENAI_API_KEY=$OPENAI_API_KEY \
+ -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+ cortexdb/cortexdb:latest
+That's the entire configuration. The container ships with 
+zero
+cortex.toml
+ overrides — every field is at its compiled default. You get:
+Single-node mode, v1 API on 
+:3141
+, data persisted to the Docker volume
+OpenAI 
+text-embedding-3-small
+ (1536 d), 
+gpt-4o-mini
+ for entity extraction
+Anthropic 
+claude-opus-4-6
+ for answer generation
+Background scheduler on (5-min compaction, 10-min methylation, 30-sec async drain)
+Encryption off, TLS off, RBAC off — this is for evaluation only
+To deploy this for real
+, layer on at least:
+A real volume mount, not a Docker named volume (your data shouldn't disappear if you 
+docker rm
+)
+TLS termination in front (caddy / nginx / cloudflare tunnel)
+A backup of 
+/data/cortexdb_data
+ somewhere
+The Enterprise profile config block if you have any compliance obligations
+Picking between profiles
+The decision tree:
+Are you reproducing the published 93.8% number?
+├─ Yes → Profile 1 (Benchmark-validated)
+└─ No → Do you need the absolute highest recall, cost no object?
+ ├─ Yes → Profile 2 (Max-Recall)
+ └─ No → Are you in a regulated industry?
+ ├─ Yes → Profile 6 (Enterprise) — start here, layer on tuning later
+ └─ No → What dominates your workload?
+ ├─ Latency per request → Profile 3 (Voice/Realtime)
+ ├─ Bulk ingest throughput → Profile 4 (Batch)
+ ├─ API cost → Profile 5 (Cost-Optimized)
+ └─ Just evaluating → Profile 7 (Quickstart)
+Most production deployments end up as 
+Profile 6 (Enterprise) + selective tuning from Profile 3 (Voice/Realtime) on the recall hot path
+. That's the configuration we recommend for production agents serving real users. Profile 2 (Max-Recall) is for the rare deployment where accuracy genuinely outweighs cost and latency — leaderboard runs, expert-assistance workloads, internal eval ceilings.
+Next steps
+Configuration Foundations
+ — the precedence rules and reload semantics
+Recall Tuning
+ — the recall-side knobs in detail
+Benchmarking
+ — full reproduction steps for the LongMemEval-S number

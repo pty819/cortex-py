@@ -1,0 +1,204 @@
+Beliefs - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Probabilistic claims with confidence + supports — list, why, build.
+Beliefs
+Beliefs are 
+probabilistic claims
+ about the world: a stance, a confidence in 
+[0,1]
+, a confidence interval, and a 
+supports
+ graph that you can walk to ask 
+"why do you think that?"
+ They're revisable as new evidence arrives.
+Stability: 
+beta
+ — confidence math and 
+stance
+ enum may extend before becoming stable.
+GET /v1/beliefs
+Capability:
+scope.read.local
+GET /v1/beliefs
+ ?scope=org:acme/dept:eng
+ &about=ent_acme_corp
+ &min_confidence=0.6
+ &as_of=2026-05-15T00:00:00Z
+ &limit=50
+Response
+{
+ "items": [
+ {
+ "belief_id": "belief_01HX...",
+ "scope": "org:acme/dept:eng",
+ "about": { "id": "ent_acme_corp", "name": "Acme Corp" },
+ "stance": "likely_true",
+ "claim": "Acme is likely to renew at Q3 boundary",
+ "confidence": 0.62,
+ "confidence_interval": [0.48, 0.74],
+ "supports": ["fact_01HX...", "ep_01HX..."],
+ "valid_from": "2026-05-13T15:42:09Z",
+ "valid_to": null,
+ "recorded_from": "2026-05-13T15:42:09Z",
+ "recorded_to": null,
+ "last_revised_at":"2026-05-15T08:01:00Z"
+ }
+ ]
+}
+stance
+ ∈ 
+{ supports, likely_true, uncertain, likely_false, contradicts }
+.
+GET /v1/beliefs/why
+The 
+"why do you think that?"
+ endpoint. Walks the support graph and renders a narrative explanation.
+GET /v1/beliefs/why?belief_id=belief_01HX...
+Response
+{
+ "belief": { /* Belief record */ },
+ "support_graph": {
+ "nodes": [
+ { "id": "fact_01HX...", "type": "fact", "weight": 0.34, "summary": "Acme signed Q3 renewal" },
+ { "id": "ep_01HX...", "type": "episode", "weight": 0.22, "summary": "POC extended in April" },
+ { "id": "evt_01HX...", "type": "event", "summary": "..." }
+ ],
+ "edges": [
+ { "from": "fact_01HX...", "to": "evt_01HX...", "relation": "extracted_from" },
+ { "from": "ep_01HX...", "to": "evt_01HX...", "relation": "contains" },
+ { "from": "belief_01HX...", "to": "fact_01HX...", "relation": "supported_by" }
+ ]
+ },
+ "narrative": "I think Acme is likely to renew because on May 13 they upgraded to 200 seats (fact_01HX), and this followed a positive POC episode (ep_01HX) in April. The signal weight is 0.62 with CI [0.48, 0.74].",
+ "narrative_model": "claude-haiku-4-5"
+}
+POST /v1/beliefs/build
+Capability:
+scope.write
+Force a belief-build pass over a scope (normally runs async).
+{ "scope": "org:acme/dept:eng" }

@@ -1,0 +1,449 @@
+MCP Server - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Give Claude, Cursor, Windsurf, VS Code Copilot, and any MCP-compatible AI tool persistent long-term memory via CortexDB.
+MCP Server
+The CortexDB MCP server is a small bridge process that exposes CortexDB to any Model Context Protocol-compatible client — Claude Desktop, Claude Code, Cursor, Windsurf, VS Code Copilot.
+Info
+Requires Python 3.10+.
+cortexdb-mcp
+ doesn't install on Python 3.9 — 
+pip
+ will refuse with "Requires-Python >=3.10". macOS users on Apple's bundled Python 3.9 need a newer interpreter first: 
+brew install 
+[email protected]
+ (then 
+python3.11 -m pip install …
+), or use 
+pipx
+ / 
+uv
+ which manage their own Python.
+Installation
+# pip (any Python 3.10+ venv)
+pip install 'cortexdb-mcp>=0.3.0'
+# pipx — recommended on macOS/Linux; auto-isolates the install
+pipx install --python python3.11 'cortexdb-mcp>=0.3.0'
+# uv — fastest; pulls its own Python if needed
+uvx --python 3.11 cortexdb-mcp --help
+The PyPI package is 
+cortexdb-mcp
+, not 
+cortexdbai-mcp
+.
+ Older docs and search results may list the wrong name — 
+cortexdbai-mcp
+ does not exist on PyPI. Also: pin 
+>=0.3.0
+. Earlier 0.2.x releases targeted v0 endpoints (
+/v1/remember
+, 
+/v1/admin/health
+) which today's API no longer exposes — they will 404 on every tool call.
+Verify it's on your 
+PATH
+:
+cortexdb-mcp --help
+Windows:
+ use the full path to 
+cortexdb-mcp.exe
+ (e.g. 
+%LOCALAPPDATA%\Programs\Python\Python313\Scripts\cortexdb-mcp.exe
+) in the MCP config — Windows MCP clients don't resolve bare command names through 
+PATH
+ reliably.
+Setup
+Every MCP client uses a JSON config file. The structure is the same everywhere — only the file path differs. There are 
+two ways to set it up:
+Option A — Zero-config (anonymous, free tier)
+Just point your client at the binary with no 
+env
+ block. On first launch the server posts to 
+POST /v1/auth/signup
+, mints an anonymous PASETO bearer + actor + scope, and persists them locally (see 
+Local state
+ below). Every subsequent call reuses that identity.
+{
+ "mcpServers": {
+ "cortexdb": {
+ "command": "cortexdb-mcp"
+ }
+ }
+}
+This is the recommended path for trying CortexDB. The token has a 7-day TTL; the server refreshes by re-signing-up before expiry.
+Option B — Bring your own token (paid tier or your own IdP)
+Set three env vars so the server skips signup and uses the credentials you supply:
+CORTEXDB_API_KEY
+ — A PASETO v4 bearer (a 
+cx_live_…
+ key from your dashboard, or one minted via 
+POST /v1/auth/tokens
+).
+CORTEXDB_ACTOR
+ — The actor id; must match the token's 
+sub
+ claim. Sent as 
+X-Cortex-Actor
+ on every call.
+CORTEXDB_SCOPE
+ — 
+(optional)
+ The default scope path tools use when one isn't passed explicitly. Defaults to the actor.
+Override the endpoint with 
+CORTEXDB_URL
+ if you self-host (default: 
+https://api-v1.cortexdb.ai
+).
+Local state
+The server stores its credentials (and only its credentials) under:
+macOS / Linux: 
+~/.config/cortexdb-mcp/state.json
+Windows: 
+%APPDATA%\cortexdb-mcp\state.json
+The file is mode 0600 on POSIX. Contents: 
+{token, user_id, scope, expires_at}
+ — exactly what 
+POST /v1/auth/signup
+ returned, ~1 KB. 
+No memories are stored locally
+ — every 
+memory_store
+ / 
+memory_search
+ call goes to the CortexDB server. Delete the state file to force a re-signup on next launch.
+Per-client configuration
+The JSON blocks below show 
+Option B (bring-your-own-token)
+. For Option A, drop the 
+env
+ block — just 
+"command": "cortexdb-mcp"
+ and the server handles signup itself on first launch.
+Claude Desktop
+macOS:
+~/Library/Application Support/Claude/claude_desktop_config.json
+Windows:
+%APPDATA%\Claude\claude_desktop_config.json
+{
+ "mcpServers": {
+ "cortexdb": {
+ "command": "cortexdb-mcp",
+ "env": {
+ "CORTEXDB_API_KEY": "v4.public.eyJpc3MiOi...",
+ "CORTEXDB_ACTOR": "user:u_019e2f...",
+ "CORTEXDB_SCOPE": "org:u_019e2f.../user:u_019e2f..."
+ }
+ }
+ }
+}
+Claude Code (CLI)
+claude mcp add cortexdb cortexdb-mcp \
+ -e CORTEXDB_URL=https://api-v1.cortexdb.ai \
+ -e CORTEXDB_API_KEY=v4.public... \
+ -e CORTEXDB_ACTOR=user:u_019e... \
+ -e CORTEXDB_SCOPE=org:u_019e.../user:u_019e...
+Or edit 
+~/.claude/mcp.json
+ directly with the same env block.
+Cursor
+Edit 
+~/.cursor/mcp.json
+:
+{
+ "mcpServers": {
+ "cortexdb": {
+ "command": "cortexdb-mcp",
+ "env": {
+ "CORTEXDB_URL": "https://api-v1.cortexdb.ai",
+ "CORTEXDB_API_KEY": "v4.public...",
+ "CORTEXDB_ACTOR": "user:u_019e...",
+ "CORTEXDB_SCOPE": "org:u_019e.../user:u_019e..."
+ }
+ }
+ }
+}
+Windsurf
+Edit 
+~/.codeium/windsurf/mcp_config.json
+:
+{
+ "mcpServers": {
+ "cortexdb": {
+ "command": "cortexdb-mcp",
+ "env": {
+ "CORTEXDB_URL": "https://api-v1.cortexdb.ai",
+ "CORTEXDB_API_KEY": "v4.public...",
+ "CORTEXDB_ACTOR": "user:u_019e...",
+ "CORTEXDB_SCOPE": "org:u_019e.../user:u_019e..."
+ }
+ }
+ }
+}
+VS Code (GitHub Copilot)
+Add to 
+.vscode/mcp.json
+ (project) or 
+~/.vscode/mcp.json
+ (global):
+{
+ "servers": {
+ "cortexdb": {
+ "command": "cortexdb-mcp",
+ "env": {
+ "CORTEXDB_URL": "https://api-v1.cortexdb.ai",
+ "CORTEXDB_API_KEY": "v4.public...",
+ "CORTEXDB_ACTOR": "user:u_019e...",
+ "CORTEXDB_SCOPE": "org:u_019e.../user:u_019e..."
+ }
+ }
+ }
+}
+Tools exposed
+0.3.0 ships 
+16 tools
+, mapped to v1 endpoints as follows:
+MCP tool
+v1 endpoint
+Notes
+memory_store
+POST /v1/experience
+Wraps free-form text in the experience envelope.
+memory_search
+POST /v1/recall
+Default view; 
+diagnostics="none"
+ so free-tier tokens succeed.
+get_context
+POST /v1/recall
+Same endpoint, holistic view tuned for "what should I know before I respond."
+advanced_search
+POST /v1/recall
+Exposes view / temporal / budgets knobs verbatim.
+memory_forget
+POST /v1/forget
+General forget — selector passed through.
+memory_delete
+POST /v1/forget
+Selector preset for 
+memory_ids=[…]
+.
+memory_bulk_delete
+POST /v1/forget
+ + 
+POST /v1/erasures/preview
+Subject-targeted delete with dry-run preview.
+memory_list
+GET /v1/events
+Scope-aware list of raw events.
+memory_get
+GET /v1/events/{id}
+Single event by id.
+entity_list
+GET /v1/facts
+Distinct subjects across facts.
+entity_get
+GET /v1/facts
+Facts filtered to one subject.
+entity_edges
+GET /v1/facts
+Predicate-grouped view of facts about one entity.
+entity_link
+POST /v1/experience
+Records a "X relates to Y" sentence for the LLM extractor.
+health_check
+GET /v1/auth/whoami
+Auth + reachability check in one call.
+get_usage
+GET /v1/auth/whoami
+Reads 
+X-RateLimit-*
+ + 
+X-Cortex-Token-Expires-*
+ response headers.
+get_insights
+POST /v1/recall
+Recall + summarise across topics for a scope.
+Tool counts that aren't 16.
+ v0.2.x exposed a different 13-tool set against legacy endpoints (
+/v1/remember
+, 
+/v1/admin/health
+) which today's API no longer routes — those clients 404 on every call. Pin 
+cortexdb-mcp>=0.3.0
+. Future versions may add tools for 
+/v1/answer
+, 
+/v1/beliefs
+, 
+/v1/understanding/synthesize
+ and other v1 endpoints that don't currently have a dedicated MCP tool — track the 
+server.py
+ decorator list for the source of truth.
+Configuration Reference
+Environment Variable
+Default
+Notes
+CORTEXDB_URL
+https://api-v1.cortexdb.ai
+v1 endpoint
+CORTEXDB_API_KEY
+(none)
+PASETO v4 bearer — see 
+Auth
+ for how to obtain
+CORTEXDB_ACTOR
+(none)
+Required. Must match the token's 
+sub
+ claim.
+CORTEXDB_SCOPE
+(actor)
+Default scope for tools that don't take an explicit one
+CORTEXDB_TIMEOUT
+30.0
+HTTP request timeout (seconds)
+Architecture
+Your Machine CortexDB
+┌──────────┐ stdio ┌───────────┐ HTTPS ┌──────────┐
+│ Cursor / │ ◄─────────► │ cortexdb- │ ◄─────────► │ v1 API │
+│ Claude / │ MCP JSON │ mcp │ REST │ server │
+│ VS Code │ │ (bridge) │ │ │
+└──────────┘ └───────────┘ └──────────┘
+The bridge process holds the bearer token in memory, injects 
+Authorization
+ and 
+X-Cortex-Actor
+ headers on every call, and translates MCP tool invocations into v1 HTTP requests. Nothing is stored locally.
+Next Steps
+Python SDK
+Programmatic access — V1Client + AsyncV1Client.
+TypeScript SDK
+Node.js and browser apps — V1Client.signup() one-liner.
+Auth
+How tokens, actors, and capabilities fit together.
+API Reference
+Endpoint-by-endpoint reference.

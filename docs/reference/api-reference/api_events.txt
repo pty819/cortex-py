@@ -1,0 +1,219 @@
+GET /v1/events - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+List events — the lossless capture layer.
+GET /v1/events
+Events are the 
+lossless capture layer
+ — immutable WAL entries with 
+observed_at
+ (event time) and 
+recorded_at
+ (ingest time). All other layers (episodes, facts, beliefs, understanding) are derived from events.
+Capability
+scope.read.local
+ + 
+scope.read.holistic
+ if 
+view=holistic
+.
+Request
+GET /v1/events
+ ?scope=org:acme/dept:eng/user:alice
+ &view=local
+ &since=2026-04-01T00:00:00Z
+ &until=2026-05-01T00:00:00Z
+ &observed_actor=user:alice
+ &modality=conversation
+ &labels=acme,renewal
+ &limit=50
+ &cursor=...
+Query param
+Notes
+scope
+Required
+view
+local
+ (default), 
+granular
+, 
+structured
+, 
+holistic
+, 
+descend
+since
+ / 
+until
+RFC 3339 — filters 
+observed_at
+observed_actor
+Filter by who performed the experience
+modality
+Filter by envelope modality
+labels
+Comma-separated; events matching 
+any
+ label
+limit
+Default 50, max 500
+cursor
+Pagination cursor from previous response
+Default view is 
+local
+ — pass 
+view=holistic
+ explicitly to walk up the scope hierarchy.
+Response
+{
+ "items": [
+ {
+ "event_id": "evt_01HX...",
+ "scope": "org:acme/dept:eng/user:alice",
+ "modality": "conversation",
+ "observed_actor": "user:alice",
+ "subject": "user:alice",
+ "content": { "kind": "message", "role": "user", "text": "..." },
+ "observed_at": "2026-05-15T10:42:00Z",
+ "recorded_at": "2026-05-15T10:42:00.412Z",
+ "labels": ["acme", "renewal"],
+ "intent": "deal_status_update",
+ "wal_offset": 134892
+ }
+ ],
+ "next_cursor": "...",
+ "has_more": true
+}
+Pass 
+exclude_content=true
+ (via header 
+X-Cortex-Exclude-Content: true
+ is 
+not
+ supported — use the query) to omit large 
+content
+ payloads.

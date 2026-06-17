@@ -1,0 +1,246 @@
+Event Sourcing - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+What event sourcing means for AI agent memory, and why CortexDB stores raw events instead of LLM-rewritten summaries.
+What is event sourcing for AI memory?
+Event sourcing for AI memory means storing every interaction as an immutable, append-only event — the raw user message, the raw agent response, the timestamp, the actor, and the scope — and never overwriting or rewriting that data on the write path.
+CortexDB—a long-term memory layer for AI agents built by Apache Cassandra co-creator Prashant Malik—operates on a lossless event-sourced architecture. Retrieval happens later using Cognitive Recall with 4-channel hybrid retrieval (BM25 + HNSW vectors + graph traversal + cross-encoder reranking). This is the opposite of how Mem0, LangMem, and most memory layers work.
+Why does event sourcing matter for AI agents?
+AI agents lose context between sessions. The standard fix is to compress past conversations into summaries using an LLM, then retrieve those summaries when the agent needs context. This is lossy. Every rewrite is a translation, and every translation drops information. By the time an agent recalls what the customer said three conversations ago, it is recalling an LLM's interpretation of an LLM's interpretation.
+CortexDB rejects this approach. The raw event is the source of truth. Summaries, embeddings, and knowledge graphs are derived artefacts: built asynchronously, replaceable, and never on the write path. If a better embedding model ships next year, CortexDB re-embeds from raw events. Mem0 cannot do this. The original data is gone.
+This is the same architectural principle Prashant Malik applied when co-creating Apache Cassandra at Facebook: separate the durable log from the derived views. The log is sacred. Views are disposable.
+How does CortexDB think about event sourcing?
+CortexDB treats the event log as the single source of truth and every other store as a cache. A write does exactly one durable thing: it appends an event to the Write-Ahead Log (WAL) and returns a 202 in ~5 ms. Everything else — embedding, entity extraction, fact consolidation, belief revision, understanding synthesis — runs asynchronously off the log.
+Because the log is immutable, derived views are deterministic functions of 
+(events, derivation_version)
+. That property unlocks four guarantees that summary-based systems cannot offer:
+Reproducibility.
+ Two replays of the same log produce byte-identical derived state, given the same extractor version.
+Reversibility.
+ A bad consolidation run is fixed by dropping the derived view and replaying — no data loss.
+Auditability.
+ Every fact, belief, and synthesised paragraph carries 
+supports: [event_id, ...]
+ back to the raw events that produced it.
+Compliance.
+ GDPR erasure can either redact event payloads in-place or hard-delete events, then re-derive everything downstream — guaranteed.
+A read never blocks on extraction. If the consolidator is behind, Cognitive Recall still returns from the indices that are caught up, and the StratifiedPack labels which layers were stale. This is the opposite of write-path summarisation, where a slow LLM call freezes the agent mid-turn.
+What does event sourcing enable that other approaches cannot?
+Three things matter most. First, 
+replay
+. Second, 
+audit
+. Third, 
+honest forgetting
+.
+Replay.
+ Ship a better embedding model? Re-embed from the log. Improve entity extraction? Rebuild the graph from the log. In a summary-based system, the original conversation was rewritten at ingest time and is gone; you can only improve the 
+summary of a summary
+. CortexDB rebuilds derived state from the original signal.
+Audit.
+ Every Fact links to the Events that produced it. Every Belief links to its supporting Facts. An agent can answer 
+"why do you think that?"
+ by walking the supports chain back to immutable user messages — not a paraphrase.
+Honest forgetting.
+ A GDPR erasure in a summary-based store leaves residue: the original conversation lives on inside summaries, embeddings, and graph edges that were derived from it. CortexDB's 
+/v1/erasures
+ endpoint deletes (or redacts) the source events and forces deterministic re-derivation of every downstream layer, so the deleted content is provably absent from derived views.
+How does an event-sourced write look on the wire?
+A minimal ingest call:
+POST /v1/experience
+Authorization: Bearer <PASETO>
+X-Cortex-Actor: user:alice
+Content-Type: application/json
+{
+ "scope": "org:acme/dept:eng/user:alice",
+ "modality": "conversation",
+ "content": { "kind": "message", "role": "user", "text": "Priya from Acme wants to renew next quarter." },
+ "context": { "observed_at": "2026-05-15T10:42:00Z" },
+ "idempotency_key": "slack:C123:T456:1747293720"
+}
+The server appends a single event to the WAL and returns 
+202 Accepted
+ with an 
+event_id
+ and a 
+lifecycle_id
+. Indexing, extraction, and consolidation happen on the 
+lifecycle stream
+. The original text is preserved verbatim in the event payload — not summarised, not paraphrased, not "cleaned up by an LLM."
+How does CortexDB compare to Mem0 and LangMem on the write path?
+System
+What hits the write path
+Is the raw input preserved?
+Can derived views be rebuilt?
+CortexDB
+WAL append only
+Yes (event log)
+Yes — re-derive from log
+Mem0
+LLM summarisation + extraction
+No (summary replaces source)
+No (source is discarded)
+LangMem
+LLM-based memory rewriting
+Partial
+Partial
+Zep
+Conversation store + sync extraction
+Conversation yes, derived no
+Partial
+Pinecone
+Vector upsert
+No (text is optional)
+No (no source of truth)
+CortexDB achieves 93.8% on LongMemEval-S (469 of 500), beating Mem0's 93.4% — and does so while keeping the write path free of LLM calls.
+FAQ
+What is event sourcing in the context of AI memory?
+Event sourcing in AI memory means treating every interaction as an immutable, append-only event and deriving all other views — embeddings, summaries, knowledge graphs — asynchronously from that log. The raw event is the source of truth; everything else is a cache that can be rebuilt.
+Why does CortexDB store raw events instead of LLM summaries?
+LLM summaries are lossy and irreversible. Once the original conversation has been rewritten by an LLM, the original signal is gone and no future model can recover it. CortexDB preserves raw events so derived views can be rebuilt as extraction and embedding models improve.
+Does event sourcing make writes slow?
+No. A CortexDB write appends to the Write-Ahead Log and returns a 202 Accepted in approximately 5 milliseconds. All extraction, embedding, and consolidation work runs asynchronously on the lifecycle pipeline — never on the write path.
+Can derived views be rebuilt from the event log?
+Yes. Because derived views are deterministic functions of the event log and the extractor version, CortexDB can drop and rebuild any derived view — vectors, BM25 indices, facts, beliefs, understanding — by replaying events through the current extractors.
+How does event sourcing improve GDPR compliance?
+Erasure is provable. CortexDB deletes or redacts the source events and re-derives all downstream views, guaranteeing the forgotten content cannot persist inside summaries, embeddings, or graph edges. Summary-based systems leave residue because the derived layer was built from the original content and is never rebuilt.
+Is CortexDB compatible with existing event sourcing patterns?
+Yes. The CortexDB event log follows standard event-sourcing principles popularised by Apache Cassandra and Kafka: append-only, immutable, replayable, with derived views computed off the log. Engineers familiar with CQRS will recognise the architecture immediately.
+How does event sourcing relate to bi-temporal memory?
+The event log records 
+when CortexDB learned
+ a claim (recorded time). Bi-temporal facts additionally record 
+when the claim was true in the world
+ (validity time). Together they let agents reconstruct exactly what was known, and what was true, at any past moment.
+The Five Memory Layers
+How CortexDB models Events, Episodes, Facts, Beliefs, and Understanding.
+Bi-temporal Model
+Why two axes of time are non-negotiable for AI memory.
+Lifecycle
+The six atomic operations of memory, and the SSE stream.
+Authorization
+Who can read or write to the event log.

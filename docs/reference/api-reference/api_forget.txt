@@ -1,0 +1,261 @@
+POST /v1/forget - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Selective forget across derived layers. For reference-counted GDPR erasure, use /v1/erasures.
+POST /v1/forget
+Selective, non-destructive forget. Removes records from one or more 
+derived
+ layers (beliefs, facts, episodes, understanding) — but leaves the underlying events intact in the WAL. For true, reference-counted event deletion (GDPR right-to-erasure), use 
+POST /v1/erasures
+ instead.
+Capability
+forget.cascade.<mode>
+ matching the requested cascade.
+Request
+{
+ "scope": "org:acme/dept:eng/user:alice",
+ "layers": ["beliefs", "facts"],
+ "selector": {
+ "about_subject": "user:alice",
+ "about_entity": "ent_acme_corp",
+ "predicate": "is_likely_to_renew",
+ "memory_ids": [],
+ "valid_during": null,
+ "recorded_during": null
+ },
+ "cascade": "derived_only",
+ "confirm_all": false,
+ "audit_note": "User retracted speculation",
+ "idempotency_key": "forget-alice-001"
+}
+Field
+Type
+Notes
+scope
+string
+Required.
+layers
+string[]
+Subset of 
+beliefs
+, 
+facts
+, 
+episodes
+, 
+understanding
+.
+selector
+object
+All fields optional; combinable. See below.
+cascade
+enum
+derived_only
+ (default) or 
+redact_events
+. See below.
+confirm_all
+bool
+Required 
+true
+ when 
+selector
+ is empty/only-layers — guards "forget everything in scope."
+audit_note
+string
+Recorded in the audit trail.
+idempotency_key
+string
+≤ 64 chars. Repeated calls deduplicated.
+Selector fields
+Field
+Effect
+about_subject
+Match records where subject equals this actor/entity ID
+about_entity
+Match records mentioning this entity
+predicate
+Match facts/beliefs with this predicate
+memory_ids
+Explicit record IDs
+valid_during
+Match records with valid_from/to overlapping this range
+recorded_during
+Same, on the recorded_from/to axis
+Cascade modes
+Mode
+Capability
+Behaviour
+derived_only
+ (default)
+forget.cascade.derived_only
+Deletes from named layers. Events untouched.
+redact_events
+forget.cascade.redact_events
+Blanks event payloads, keeps 
+id
+ + 
+wal_offset
+ (preserves refcount integrity).
+True event deletion is 
+not
+ a cascade mode here. See 
+erasures
+ for the GDPR path.
+Response
+{
+ "deleted": {
+ "events": 0,
+ "episodes": 0,
+ "facts": 2,
+ "beliefs": 1,
+ "understanding": 0
+ },
+ "audit_id": "audit_01HX..."
+}
+Errors
+HTTP
+error_code
+When
+403
+policy_denied
+Requested cascade capability missing
+422
+EMPTY_SELECTOR_WITHOUT_CONFIRMATION
+Selector empty (or only 
+layers
+) and 
+confirm_all
+ is not 
+true
+422
+invalid_selector
+Selector fields contradict (e.g., 
+memory_ids
+ plus 
+about_subject
+)

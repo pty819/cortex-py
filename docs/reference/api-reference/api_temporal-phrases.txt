@@ -1,0 +1,169 @@
+Temporal Phrases - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Register custom natural-language temporal phrases.
+Temporal Phrases
+Register custom natural-language phrases that the recall + answer pipelines should parse into temporal ranges. CortexDB ships with a default set (
+last week
+, 
+this quarter
+, etc.); add tenant-specific ones like 
+"fiscal Q3"
+ or 
+"holiday freeze"
+.
+Stability: 
+beta
+.
+POST /v1/temporal/phrases
+{
+ "name": "fiscal Q3",
+ "anchor": "2026-01-31T00:00:00Z",
+ "expression":"+P6M..+P9M"
+}
+Field
+Type
+Notes
+name
+string
+Phrase to match (case-insensitive, whole-word).
+anchor
+RFC 3339
+Reference instant.
+expression
+string
+Two ISO 8601 durations separated by 
+..
+, relative to 
+anchor
+.
+GET /v1/temporal/phrases
+List all registered phrases.
+DELETE /v1/temporal/phrases/
+Returns 
+204
+.

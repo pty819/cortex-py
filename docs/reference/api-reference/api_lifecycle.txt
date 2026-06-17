@@ -1,0 +1,247 @@
+Lifecycle - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Async job lifecycle stream — SSE plus list/get/cancel.
+Lifecycle
+Every async operation in CortexDB — experiences, imports, erasures, synthesis — emits 
+lifecycle events
+. You can subscribe via SSE for real-time updates, list past events with pagination, or fetch a single LCE.
+The full event types: 
+captured
+, 
+extracted
+, 
+indexed
+, 
+consolidated
+, 
+compressed
+, 
+forgotten
+, 
+policy_changed
+, 
+policy_revoked
+, 
+import_progress
+, 
+import_complete
+, 
+import_error
+, 
+export_progress
+, 
+export_complete
+, 
+erasure_progress
+, 
+erasure_complete
+, 
+lagging
+.
+GET /v1/lifecycle/stream — SSE subscription
+Long-running SSE connection. Filter with query params.
+GET /v1/lifecycle/stream
+ ?scope=org:acme/dept:eng
+ &event_id=evt_01HX...
+ &events=captured,extracted,indexed,consolidated
+ &since_lifecycle_id=lce_01HY...
+Query param
+Notes
+scope
+Filter by scope
+event_id
+Filter to lifecycle events for one memory event
+batch_id
+Filter to lifecycle events for one bulk write
+erasure_id
+ / 
+job_id
+ / 
+import_id
+Filter to one async job
+events
+Comma-separated event types
+since_lifecycle_id
+Resume from this LCE; replays missed events
+Frames
+event: captured
+data: { "event_id": "evt_01HX...", "scope": "...", "wal_offset": 134892, "lifecycle_id": "lce_01HX..." }
+event: extracted
+data: { "event_id": "evt_01HX...", "facts": 3, "beliefs_revised": 1, "lifecycle_id": "lce_01HY..." }
+event: indexed
+data: { "event_id": "evt_01HX...", "bm25_doc_id": "...", "hnsw_ann_id": "...", "lifecycle_id": "lce_01HZ..." }
+event: consolidated
+data: { "event_id": "evt_01HX...", "lifecycle_id": "lce_01I0..." }
+Reconnection
+Use the 
+Last-Event-ID
+ header on reconnect (set automatically by browsers and most SSE clients) or pass 
+since_lifecycle_id=<last LCE>
+ — the server replays everything you missed.
+GET /v1/lifecycle — Paginated list
+Same filters as the stream, plus standard 
+limit
+ + 
+offset
+ pagination.
+GET /v1/lifecycle?scope=org:acme/dept:eng&since_lifecycle_id=lce_01HY...&limit=50
+Response
+{
+ "items": [
+ { "lifecycle_id": "lce_01HX...", "kind": "captured", "ts": "...", "event_id": "evt_01HX...", "payload": { ... } },
+ { "lifecycle_id": "lce_01HY...", "kind": "extracted", "ts": "...", "event_id": "evt_01HX...", "payload": { ... } }
+ ],
+ "next_offset": 50,
+ "has_more": true
+}
+GET /v1/lifecycle/event/
+Single lifecycle event by ID.
+GET /v1/lifecycle/memory-event/
+The lifecycle summary for one memory event — what stages it has completed and the LCE IDs.
+Response
+{
+ "event_id": "evt_01HX...",
+ "stages_completed": ["captured", "extracted", "indexed"],
+ "lifecycle_event_ids": ["lce_01HX...", "lce_01HY...", "lce_01HZ..."],
+ "derived": {
+ "facts": ["fact_01HX..."],
+ "beliefs": ["belief_01HX..."],
+ "episodes":[]
+ }
+}
+POST /v1/lifecycle/memory-event/
+/cancel
+Cancel further async stages for an event. Already-completed stages are not rolled back; the event is excluded from recall.
+{ "audit_note": "Bad input — operator override" }
+Response
+{
+ "event_id": "evt_01HX...",
+ "stages_cancelled": ["consolidated", "compressed"],
+ "stages_already_completed": ["captured", "extracted", "indexed"],
+ "excluded_from_recall": true
+}

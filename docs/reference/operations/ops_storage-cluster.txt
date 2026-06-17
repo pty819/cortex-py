@@ -1,0 +1,600 @@
+Storage & Cluster - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Storage paths, WAL, HNSW shape, scheduler intervals, cluster mode CLI flags, replication, and blob backends.
+Storage & Cluster
+CortexDB stores everything on one canonical write path: an append-only WAL backed by RocksDB. Every searchable index — HNSW vectors, Tantivy fulltext, the KG, materialized views — is a derivative of that WAL. Restore the WAL and you can rebuild every index.
+This page covers the storage knobs, the cluster topology flags, and the blob backends for media payloads.
+Storage paths and durability
+[storage]
+ section
+[storage]
+data_path = "/data/cortex" # default
+wal_sync = true # default
+max_disk_usage_percent = 95 # default
+Field
+Type
+Default
+What it controls
+data_path
+PathBuf
+/data/cortex
+Root directory for RocksDB, Tantivy, and the WAL.
+wal_sync
+bool
+true
+If true, 
+fsync()
+ after every WAL append. If false, durability gap up to ~10 ms but ~2-5× faster writes.
+max_disk_usage_percent
+u8 [0..100]
+95
+Soft refuse-writes watermark. At this disk fullness, 
+/v1/experience
+ starts returning 507.
+Operator notes:
+The default 
+/data/cortex
+ is for the Docker/k8s shape where the operator mounts a real volume there. On a bare-metal install you almost always want to override (
+/var/lib/cortexdb
+ is conventional on Linux). The config file lives at 
+<data_path>/cortex.toml
+, so changing 
+data_path
+ also moves the config — see 
+Configuration Foundations
+.
+wal_sync = false
+ is acceptable for voice / realtime workloads where the user can re-say what they meant after a crash. It is 
+not
+ acceptable for financial, medical, or any compliance-relevant workload. The Enterprise profile keeps it 
+true
+.
+max_disk_usage_percent
+ is a soft floor, not a hard one — RocksDB doesn't refuse writes itself. CortexDB starts refusing application writes when this is hit; existing data and compaction can still grow disk usage beyond it. Keep ~10% headroom over this value on the actual disk.
+Engine: HNSW and cache
+[engine]
+ section
+[engine]
+max_memory_bytes = 25769803776 # 24 GB (default)
+vector_dimensions = 3072 # default; MUST match embedding output
+hnsw_m = 16 # default
+hnsw_ef_construction = 200 # default
+hnsw_ef_search = 100 # default; runtime-tunable
+hnsw_quantization = "ScalarU8" # "ScalarU8" or "None"
+hnsw_tombstone_rebuild_threshold = 0.15 # default; 15% deleted → rebuild
+block_cache_bytes = 8589934592 # 8 GB (default)
+Field
+Default
+Range
+Tuning
+max_memory_bytes
+24 GB
+≥ 4 GB
+Total heap budget for engine state. Set close to physical RAM minus 4-8 GB for OS + page cache.
+vector_dimensions
+3072
+{256, 384, 512, 768, 1024, 1536, 3072}
+Must equal the embedding model's output dim.
+ See 
+Embeddings
+.
+hnsw_m
+16
+[4, 64]
+Edges per HNSW node. Higher = better recall, larger index, slower build.
+hnsw_ef_construction
+200
+[10, 2000]
+Build-time candidate pool. Higher = better quality, slower indexing.
+hnsw_ef_search
+100
+[10, 2000]
+Query-time candidate pool. Higher = better recall, slower queries.
+hnsw_quantization
+ScalarU8
+enum
+ScalarU8
+ quantizes to 1 byte per dim (~4× memory savings, ~-0.5 pp recall). 
+None
+ keeps 
+f32
+.
+hnsw_tombstone_rebuild_threshold
+0.15
+[0.0, 1.0]
+Trigger background rebuild when 15% of nodes are deleted.
+block_cache_bytes
+8 GB
+—
+RocksDB block cache. Affects read latency on cold data.
+HNSW recipes:
+Goal
+hnsw_m
+ef_construction
+ef_search
+quantization
+Default (LongMemEval-S 93.8%)
+16
+200
+100
+ScalarU8
+Voice / realtime
+16
+200
+60
+ScalarU8
+Memory-constrained
+16
+200
+100
+ScalarU8
+Max recall accuracy
+32
+500
+200
+None
+Bulk ingest (build fast, search later)
+16
+100
+100
+ScalarU8
+The Max-Recall config buys roughly +0.5-1 pp at ~3× memory, ~2× build time, ~2× query time. Almost never worth it in production.
+Network and ports
+[network]
+ section
+[network]
+api_port = 8443 # cortex.toml default
+gossip_port = 7000 # default
+grpc_port = 9042 # default
+request_timeout_ms = 10000 # default (10 s)
+gossip_interval_ms = 1000 # default (1 s)
+Default port mapping:
+Port
+Role
+Notes
+3141
+v1 public API (single-node CLI default)
+Where SDKs and clients connect.
+3142
+Legacy API (single-node, derived as port+1)
+Bound to 
+127.0.0.1
+ only by default.
+8443
+api_port
+ from cortex.toml
+Used by cluster-mode binaries.
+7000
+UDP gossip
+Cluster membership and failure detection.
+9042
+Internal gRPC RPC
+Inter-node calls (replication, coordination).
+The single-node CLI defaults 
+--port=3141
+, while the TOML 
+api_port
+ defaults to 
+8443
+.
+ This is the second port-defaults gotcha (after embedding dims) — pick the value your reverse proxy is forwarding to and set both consistently.
+To override the legacy port (single-node only):
+export CORTEX_LEGACY_API_ADDR=0.0.0.0:3142 # expose legacy externally
+# or
+export CORTEX_API_ADDR=127.0.0.1:3142 # equivalent older env var
+Scheduler
+[scheduler]
+ section
+[scheduler]
+enabled = true # default
+compaction_interval_secs = 300 # 5 min (default; min: 30)
+methylation_interval_secs = 600 # 10 min (default; min: 60)
+enrichment_drain_interval_secs = 30 # 30 s (default; min: 5)
+cognitive_persist_interval_secs = 60 # 1 min (default; min: 10)
+feedback_weight_interval_secs = 120 # 2 min (default; min: 30)
+The scheduler runs five periodic jobs:
+Job
+Default interval
+What it does
+Compaction
+5 min
+Merge and dedupe memory entries; reduces storage footprint and improves recall over time.
+Methylation
+10 min
+Decay-adjust salience scores by access patterns.
+Enrichment drain
+30 s
+Consume async LLM extraction results so they don't pile up.
+Cognitive persist
+1 min
+Checkpoint planner state + ranker weights to durable storage.
+Feedback weight update
+2 min
+Apply feedback gradients to ranker weights.
+CORTEX_SCHEDULER_DISABLE=1
+ is the env-var override to disable the entire scheduler at startup. 
+Always set this for benchmarks
+ (over long runs the scheduler emits summary entries that pollute the vector index — see 
+Benchmarking
+).
+Schema validation enforces the minimum intervals listed above. Setting 
+compaction_interval_secs = 10
+ will fail startup with a 
+ValidationError
+.
+Cluster topology
+CortexDB runs in two distinct modes:
+Single-node:
+cortexdb [PORT] [DATA_DIR]
+. No gossip, no RPC, no replication. Production-ready for ≤ 10M events on commodity hardware.
+Cluster:
+ All four flags 
+--node-id
+, 
+--rpc-addr
+, 
+--gossip-addr
+, 
+--seed-nodes
+ passed together. Consistent hashing, gossip, anti-entropy repair, configurable replication factor.
+Cluster mode CLI
+cortexdb \
+ --node-id=1 \
+ --rpc-addr=10.0.0.1:7100 \
+ --gossip-addr=10.0.0.1:7000 \
+ --seed-nodes=10.0.0.1:7000,10.0.0.2:7000,10.0.0.3:7000 \
+ --rf=3 \
+ --port=3141 \
+ --data-dir=/data/cortex/node1
+Flag
+Required
+Default
+Notes
+--node-id=N
+Yes
+—
+Unique 
+u64
+. Persistent across restarts. Don't reuse.
+--rpc-addr=HOST:PORT
+Yes
+—
+Internal RPC bind. Reachable by other nodes.
+--gossip-addr=HOST:PORT
+Yes
+—
+UDP gossip bind. Same network reachability requirement.
+--seed-nodes=A,B,C
+Yes
+—
+Comma-separated 
+host:port
+ of initial peers. Use at least 3 for resilience.
+--peers=ID:HOST:PORT,...
+No
+—
+Alternative explicit peer list with node ids.
+--rf=N
+No
+3
+Replication factor. Must be ≤ cluster size.
+--port=PORT
+No
+3141
+V1 API bind.
+--data-dir=DIR
+No
+cortexdb_data_{node_id}
+RocksDB + cortex.toml location.
+[cluster]
+ TOML
+[cluster]
+node_id = 1 # must match --node-id
+seed_nodes = ["10.0.0.1:7000", "10.0.0.2:7000"]
+replication_factor = 3
+vnodes_per_node = 256
+consistency_default = "Quorum" # "One" | "Quorum" | "All"
+Field
+Default
+Notes
+node_id
+—
+Required. Must match 
+--node-id
+ CLI flag.
+seed_nodes
+["127.0.0.1:7000"]
+Default is the local loopback — fine for single-node, useless for cluster.
+replication_factor
+3
+Number of replicas per partition. 
+cluster_size >= rf
+ required.
+vnodes_per_node
+256
+Virtual nodes per physical node in the consistent-hash ring. Higher = smoother re-balancing on join/leave; lower = less per-node bookkeeping overhead.
+consistency_default
+Quorum
+Default consistency level for reads/writes. 
+Quorum
+ = ⌈(rf+1)/2⌉ replicas.
+Cluster sizing rules of thumb:
+3 nodes, rf=3 → can tolerate 1 node down with Quorum reads/writes.
+5 nodes, rf=3 → tolerates 1 node down at strong consistency; tolerates 2 down at eventual.
+5 nodes, rf=5 → tolerates 2 down at Quorum.
+Beyond ~7 nodes, increase 
+vnodes_per_node
+ to keep partition distribution smooth.
+Blob storage
+For binary content (images, audio, video, documents), CortexDB stores the bytes in a blob backend and keeps a content-addressed reference in the WAL.
+[blob_store]
+ section
+[blob_store]
+provider = "local" # "local" | "s3" | "gcs" | "azure"
+# Local mode
+data_dir = "/data/cortex/blobs"
+# S3 mode
+bucket = "acme-cortex-blobs"
+region = "us-east-1"
+endpoint = "" # optional — for S3-compatible (R2, MinIO, B2)
+access_key_id = "" # falls back to AWS_ACCESS_KEY_ID env
+secret_access_key = "" # falls back to AWS_SECRET_ACCESS_KEY env
+session_token = "" # optional — for STS / role assumption
+allow_http = false # set true ONLY for MinIO over LAN
+virtual_hosted_style_request = true # false for path-style URLs (some S3 clones)
+# S3 encryption
+s3_encryption_type = "aws:kms" # "AES256" | "aws:kms" | "" (none)
+s3_kms_key_id = "arn:aws:kms:..." # required if s3_encryption_type = aws:kms
+s3_bucket_key_enabled = true # KMS bucket key — saves KMS API costs
+s3_customer_key_base64 = "" # for SSE-C (rare)
+The same env-var shape exists for every TOML field, e.g. 
+CORTEX_BLOB_BUCKET
+, 
+CORTEX_BLOB_S3_KMS_KEY_ID
+. The env var wins if both are set.
+Per-provider quickstarts
+Local (default):
+[blob_store]
+provider = "local"
+data_dir = "/data/cortex/blobs"
+S3:
+[blob_store]
+provider = "s3"
+bucket = "acme-cortex-blobs"
+region = "us-east-1"
+s3_encryption_type = "aws:kms"
+s3_kms_key_id = "arn:aws:kms:us-east-1:123:key/abc"
+GCS:
+[blob_store]
+provider = "gcs"
+gcs_bucket = "acme-cortex-blobs"
+gcs_application_credentials = "/etc/cortexdb/gcp/svc-account.json"
+Azure Blob:
+[blob_store]
+provider = "azure"
+azure_account = "acmecortex"
+azure_container = "blobs"
+azure_access_key = "" # falls back to AZURE_STORAGE_KEY env
+MinIO (S3-compatible self-hosted):
+[blob_store]
+provider = "s3"
+bucket = "cortex"
+endpoint = "http://minio.svc.cluster.local:9000"
+region = "us-east-1"
+allow_http = true
+virtual_hosted_style_request = false
+Bytes accessed via the API
+Blobs are referenced from 
+/v1/experience
+ payloads by content hash and served back via 
+/v1/blobs/{hash}
+. The server itself reads/writes to the configured backend transparently — there's no direct client-to-blob-store traffic. For large workloads, this means your network bandwidth between CortexDB and the blob backend matters; co-locate them in the same region/VPC.
+Content modality processors
+Each modality (image, audio, video, document, sensor) has its own LLM/API integration for extracting text from binary content. All processors are optional — if the API isn't configured, ingest silently skips extraction for that modality.
+# Image: defaults to GPT-4o vision
+export CORTEX_IMAGE_PROVIDER=openai
+export CORTEX_IMAGE_API_URL=https://api.openai.com/v1
+export CORTEX_IMAGE_API_KEY=$OPENAI_API_KEY
+export CORTEX_IMAGE_MODEL=gpt-4o
+export CORTEX_IMAGE_MAX_TOKENS=1024
+# Audio: defaults to Whisper
+export CORTEX_AUDIO_PROVIDER=openai
+export CORTEX_AUDIO_API_URL=https://api.openai.com/v1
+export CORTEX_AUDIO_API_KEY=$OPENAI_API_KEY
+export CORTEX_AUDIO_MODEL=whisper-1
+export CORTEX_AUDIO_LANGUAGE=en # optional
+# Video: keyframe extraction via ffmpeg, then per-frame via image processor
+export CORTEX_FFMPEG_PATH=ffmpeg
+export CORTEX_VIDEO_KEYFRAMES_PER_MIN=6
+# Document: provider-specific (OCR or PDF extraction)
+export CORTEX_DOCUMENT_PROVIDER=...
+export CORTEX_DOCUMENT_API_URL=...
+export CORTEX_DOCUMENT_API_KEY=...
+# Sensor: custom JSON/binary parsers
+export CORTEX_SENSOR_PROVIDER=...
+export CORTEX_SENSOR_API_URL=...
+export CORTEX_SENSOR_API_KEY=...
+export CORTEX_SENSOR_MODEL=...
+The same fields can be set under 
+[content_processors.image]
+ / 
+.audio
+ / 
+.video
+ / 
+.document
+ / 
+.sensor
+ in 
+cortex.toml
+ if you prefer.
+Disk sizing
+A rough rule of thumb on text-heavy workloads with 
+text-embedding-3-small
+ (1536 d, 
+ScalarU8
+ quantization):
+Events stored
+Disk footprint
+Memory (cache + HNSW)
+100 K
+~2 GB
+~1 GB
+1 M
+~15 GB
+~6 GB
+10 M
+~120 GB
+~40 GB
+100 M
+~1.1 TB
+~350 GB (cluster)
+Above ~10 M events, plan on multi-node deployment unless you have a very large single box. The single-node 
+cortexdb
+ binary handles 10 M events fine but the operational risk (one disk, one box, one process) is usually not what you want past that scale.
+Backups and snapshots
+Backup config lives under 
+[security.backup]
+ (yes, the schema put it there):
+[security.backup]
+enabled = true
+provider = "s3" # local | s3 | gcs | azure
+target_bucket = "acme-cortex-backups"
+backup_interval_secs = 3600 # hourly
+retention_days = 90
+compression_enabled = true
+The actual snapshot mechanism is RocksDB checkpoint + WAL segment copy. Snapshots are point-in-time consistent. Restore is 
+tar -xf snapshot.tar -C /data/cortex && cortexdb
+ — the WAL replay rebuilds every derived index automatically.
+Next steps
+Configuration Foundations
+ — the file/env/CLI precedence rules
+Security & Compliance
+ — encryption, TLS, RBAC, audit
+Profiles & Presets
+ — see the Batch profile for a high-throughput config

@@ -130,20 +130,25 @@ CortexDB 原版五层:Events → Episodes → Facts → Beliefs → Understandin
 - ✅ 范围已定(B:个人/小团队,聚焦图谱)
 - ✅ 全部技术选型已确认(见第 2 节)
 - ✅ 编排方案已定(方案 2 + 阶段 0)
-- ⬜ **数据模型设计未呈现/未批准**(这是下一步)
-- ⬜ spec 文档未写
-- ⬜ 实现计划未做
+- ✅ **调研笔记已写**:`docs/specs/02-research-notes.md`
+- ✅ **技术选型 spec 已写**:`docs/specs/01-technical-decisions.md`
+- ✅ **数据模型 spec 已写**:`docs/specs/03-data-model.md`(含完整 schema + 决策 rationale)
+- ✅ **阶段 0 冒烟测试计划已写**:`docs/specs/04-stage0-smoke-test.md`
+- ⬜ **用户 review specs**(下一步——请用户审阅 `docs/specs/` 全部四份)
+- ⬜ **用户批准数据模型决策**(03-data-model.md 第 11 节列了 8 个待确认决策点)
+- ⬜ 实现计划(writing-plans)
+- ⬜ 阶段 0 执行
 
 ### 对新 agent 的流程要求
 
-1. **先读本文件**,然后读 `docs/specs/` 下任何已有文档
-2. **呈现数据模型设计**(第 5 节列出的决策点),逐节让用户批准
-3. 批准后写成 spec 文档到 `docs/specs/`
-4. spec 自检(占位/矛盾/歧义/范围)
-5. 用户 review spec
-6. **然后才能写代码**(阶段 0 的 DDL 是代码,需要 spec 先批准)
+1. **先读本文件**,然后读 `docs/specs/` 下四份 spec(01→02→03→04 顺序)
+2. **把数据模型决策点呈现给用户确认**(见 `03-data-model.md` 第 11 节的 8 个点)
+3. 用户确认后,如有调整则更新 spec
+4. **执行阶段 0**:按 `04-stage0-smoke-test.md` 写 `scripts/stage0/` 的 SQL 脚本,用 Postgres 跑冒烟测试
+5. 阶段 0 通过后,转入 writing-plans 制定阶段 1-5 的实现计划
+6. **硬性约束:数据模型 spec 批准前,不写 schema DDL;阶段 0 冒烟通过前,不写 Python 业务代码**
 
-**硬性约束:设计批准前不写任何实现代码。** 这是 brainstorming skill 的 HARD-GATE。
+**这是 brainstorming skill 的 HARD-GATE。**
 
 ---
 

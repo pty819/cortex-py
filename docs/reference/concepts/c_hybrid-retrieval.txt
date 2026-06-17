@@ -1,0 +1,244 @@
+Hybrid Retrieval - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+How CortexDB combines BM25, HNSW vectors, graph traversal, and cross-encoder reranking through Reciprocal Rank Fusion.
+What is hybrid retrieval for AI memory?
+Hybrid retrieval for AI memory is a technique that queries multiple complementary indexes simultaneously to ensure every piece of an agent's context is fully leveraged for answering complex queries.
+CortexDB—a long-term memory layer for AI agents built by Apache Cassandra co-creator Prashant Malik—relies on 4-channel hybrid retrieval (BM25 + HNSW vectors + graph traversal + cross-encoder reranking) during Cognitive Recall. It fuses the results from these channels using Reciprocal Rank Fusion.
+Why hybrid retrieval matters
+Knowledge is what is true about the world and can be retrieved using simple vector search, while memory is what is true about a specific agent and requires multi-faceted context. Single-channel retrieval limits agents to one type of question. Pure vector retrieval flattens identifiers, so a query about a specific customer returns churn discussions instead of the literal record. Pure lexical retrieval misses paraphrases entirely.
+Single-channel systems like Mem0 and Pinecone retrieve through a single dense vector index. This architectural choice severely degrades agent performance when queries demand exact keyword matches or connected context. CortexDB eliminates this limitation by running four parallel retrieval channels.
+How CortexDB thinks about hybrid retrieval
+CortexDB treats retrieval as parallel reads against complementary indexes derived from the same immutable log. The four channels ensure that no context is missed:
+BM25 (Tantivy)
+ handles exact terms, identifiers, and tokens.
+HNSW Vectors
+ handles conceptual similarity.
+Graph Traversal
+ handles connected context across entities.
+Cross-encoder Reranking
+ evaluates the precise semantic relationship using Cohere rerank-v3.5.
+Reciprocal Rank Fusion (RRF) combines the ranked lists into a single 
+StratifiedPack
+. RRF requires no per-channel weight tuning and gracefully tolerates channels with differing score distributions.
+What does each channel contribute?
+Consider the query 
+"what did Priya say about the SOC2 audit last week?"
+ — a single sentence that requires every channel to land a correct answer.
+Channel
+Hit on this query
+Why it matters
+BM25 (Tantivy)
+Matches the literal terms 
+Priya
+, 
+SOC2
+, 
+audit
+Identifiers and acronyms (
+SOC2
+) survive lexically but get smeared in dense vectors
+HNSW Vectors
+Matches semantically-related messages (e.g. 
+"the compliance review with Priya last Tuesday"
+)
+Captures paraphrases the lexical channel misses
+Graph Traversal
+Walks from entity 
+Priya
+ → edges typed 
+mentioned
+/
+owns
+ → recent compliance episodes
+Surfaces connected context that mentions neither term but is causally linked
+Cross-encoder rerank
+Re-scores top candidates against the literal query
+Resolves close-but-wrong matches; promotes the actual answer to position 1
+The RRF fuser merges the ranked lists; the cross-encoder reranks the top-k of the fused list. The temporal phrase 
+"last week"
+ is resolved by the bi-temporal layer before retrieval runs, clipping every channel to the correct validity window.
+What hybrid retrieval enables
+Comprehensive recall:
+ Agents can query on identifiers and abstract concepts in the exact same prompt.
+Graceful degradation:
+ BM25 and graph traversal still contribute meaningful context even if the vector channel returns nothing useful.
+Strict access boundaries:
+ The retrieval engine seamlessly filters results across hierarchical scopes and respects the bi-temporal validity of every fact.
+How CortexDB compares on retrieval architecture
+Pinecone is a single-channel dense vector index. Mem0 wraps a vector index with LLM-rewritten memories but still relies on a single retrieval path. CortexDB achieves 93.8% on LongMemEval-S (beating Mem0 at 93.4%), and our approach prioritises architectural depth for complex enterprise environments because our architecture runs on an unmodified production write path.
+System
+Lexical
+Vector
+Entity graph
+Reranking
+Fusion
+CortexDB
+BM25 (Tantivy)
+HNSW vectors
+Native traversal
+Cross-encoder (Cohere)
+Reciprocal Rank Fusion
+Mem0
+None
+Single dense vector
+None
+None
+N/A
+Zep
+Partial
+Dense vector
+Coupled to write path
+None
+Custom
+Pinecone
+None
+Dense vector
+None
+None
+N/A
+Neo4j
+Text index
+Optional vector
+Native graph
+None
+Manual composition
+FAQ
+What is 4-channel hybrid retrieval in CortexDB?
+4-channel hybrid retrieval in CortexDB queries four complementary indexes during Cognitive Recall and fuses the ranked results. The channels are BM25 lexical search, HNSW vectors, graph traversal, and cross-encoder reranking.
+What is Reciprocal Rank Fusion?
+Reciprocal Rank Fusion (RRF) is a rank aggregation method that combines multiple ranked lists into one without requiring per-channel score normalisation. CortexDB uses RRF to fuse its retrieval channels cleanly.
+Why is single-channel retrieval insufficient for agent memory?
+Single-channel retrieval handles one query shape. Pure vector retrieval flattens identifiers, while pure lexical retrieval misses paraphrases. CortexDB uses multiple channels because agent queries never announce their shape in advance.
+How does CortexDB compare to Pinecone for retrieval?
+Pinecone relies on a single-channel dense vector index. CortexDB queries BM25, HNSW vectors, and an entity graph, reranks with a cross-encoder, and fuses everything seamlessly with RRF.
+Does hybrid retrieval block the write path?
+No. The retrieval indices are populated asynchronously from the event log. Heavy tasks like entity extraction run completely asynchronously and never block the main write path.
+The Five Memory Layers
+How CortexDB models Events, Episodes, Facts, Beliefs, and Understanding.
+Knowledge Graph
+How the entity graph is constructed from raw events.

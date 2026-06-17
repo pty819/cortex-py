@@ -1,0 +1,387 @@
+Benchmarking - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+How to reproduce the published 93.8% LongMemEval-S and 86.9% LoCoMo numbers. Exact config, hardware, datasets, and known pitfalls.
+Benchmarking
+This page contains the exact configuration we used to produce the numbers in the 
+benchmark paper
+ — 93.8% on LongMemEval-S (469/500) and 86.9% on LoCoMo categories 1-4 (1,339/1,540).
+If you're evaluating CortexDB against another memory layer, or just want to verify the published numbers, this is the recipe.
+Why a dedicated benchmark config
+The default production configuration is 
+not
+ the benchmark configuration. Three things differ, all driven by an interaction between background maintenance and long-running evaluations:
+Background scheduler is off.
+ Compaction and methylation run on intervals (default: every 5 min and 10 min). Over a 100-min benchmark run, the scheduler ticks ~20 times and emits "C:" community summaries and "P:" procedure summaries that pollute the vector index. These are appropriate in production (compress storage, refresh salience) but turn into noise during benchmarks because each question gets its own scope and the summaries cross-pollinate them.
+Per-question scopes.
+ Each LongMemEval-S question is loaded into a fresh 
+ws:bench_qN
+ scope. This is what the eval harness expects — every question is an independent measurement. Production deployments use a few persistent scopes per tenant.
+text-embedding-3-small
+ (1536d).
+ The benchmark numbers are with the smaller, cheaper model. 
+text-embedding-3-large
+ (3072d) gains ~+0.4 pp on LongMemEval-S at ~3× the cost — we ship the small model as the default config because the gain isn't worth the cost for most users.
+Everything else is at compiled defaults.
+The benchmark cortex.toml
+This is the literal file shipped at 
+cortexdb_data_server/cortex.toml
+ in the source repo:
+# Benchmark override config.
+# Required sections (cluster/storage/engine/network/llm/governance) are
+# minimal — all field defaults apply via serde(default = ...).
+# The purpose of this file is to disable the background scheduler so
+# that compaction doesn't attempt cross-tenant abstractions during
+# LongMemEval runs (one tenant per question).
+[cluster]
+node_id = 1
+[storage]
+[engine]
+[network]
+[llm]
+[governance]
+[scheduler]
+enabled = false
+That's the entire config. Empty sections mean "use all compiled defaults for this section." The single non-default field is 
+scheduler.enabled = false
+.
+Environment variables for the run
+# Required
+export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-ant-...
+# Pin the embedding model to what produced the published number
+export CORTEX_EMBEDDING_MODEL=text-embedding-3-small
+export CORTEX_EMBEDDING_DIMS=1536
+# Pin the answer model
+export CORTEX_ANSWER_PROVIDER=anthropic
+export CORTEX_ANSWER_MODEL=claude-opus-4-6
+# Belt-and-suspenders: also disable scheduler via env (in case the toml is missed)
+export CORTEX_SCHEDULER_DISABLE=1
+Notice what's 
+not
+ here — no recall-tuning overrides. The published numbers come from the compiled defaults for everything in 
+cortex-coordinator/src/recall.rs
+ (retrieval top_k, RRF k, graph weight, HyDE schedule, multihop config). If you change any of those, you're no longer reproducing our number; you're producing a new one.
+Hardware
+The published numbers were produced on:
+AWS 
+m6i.4xlarge
+ (16 vCPU, 64 GB RAM, NVMe instance store)
+us-east-1
+Ubuntu 22.04
+, kernel 5.15
+The OpenAI and Anthropic APIs are the wall-clock bottleneck — recall pipeline CPU work runs in the tens of milliseconds; the 1.5-3 second per-question wall clock is dominated by the LLM round-trips. You can run the benchmark on a laptop and get the same accuracy number; only the wall clock changes.
+Hardware
+Wall clock (150 q)
+Accuracy
+m6i.4xlarge
+~95 min
+93.8%
+c7i.large (2 vCPU)
+~110 min
+93.8%
+MacBook Pro M3
+~85 min (faster network)
+93.8%
+Accuracy is hardware-invariant by design. If you see lower accuracy on smaller hardware, something else is off — check that you're not on mock embeddings and that the scheduler is actually disabled.
+Running LongMemEval-S
+LongMemEval-S is 500 questions across 5 categories. The eval harness lives in 
+cortexv2/benchmarks/longmemeval/
+.
+# Clone the repo (the benchmark harness ships in the source repo)
+git clone https://github.com/cortexdb/cortex && cd cortex
+# Start the server with the benchmark config
+mkdir -p cortexdb_data_server
+cp benchmarks/cortex_benchmark.toml cortexdb_data_server/cortex.toml
+cargo run --release --bin cortexdb -- 3141 cortexdb_data_server &
+SERVER_PID=$!
+# Wait for server health
+until curl -sf http://localhost:3141/v1/admin/health > /dev/null; do sleep 1; done
+# Run the benchmark
+cd benchmarks
+uv venv && source .venv/bin/activate
+uv pip install -e .
+python -m longmemeval.run \
+ --base-url http://localhost:3141 \
+ --dataset s \
+ --output results/lme_s_$(date +%Y%m%d).json
+# Score it
+python -m longmemeval.score results/lme_s_$(date +%Y%m%d).json
+Expected output:
+LongMemEval-S Results
+─────────────────────
+Total: 469/500 (93.8%)
+By category:
+ single-session-user: 94/100 (94.0%)
+ single-session-assistant: 91/100 (91.0%)
+ temporal-reasoning: 97/100 (97.0%)
+ multi-session: 93/100 (93.0%)
+ knowledge-update: 94/100 (94.0%)
+(Category breakdown rounds; total may vary by ±2 questions on re-runs due to LLM output non-determinism.)
+Running LoCoMo
+LoCoMo is a 10-conversation, 1,540-question multi-session benchmark across 5 categories. The published 86.9% covers categories 1-4 (we exclude category 5, which requires entity-graph features that aren't in our recall surface yet).
+cd benchmarks
+python -m locomo.run \
+ --base-url http://localhost:3141 \
+ --output results/locomo_$(date +%Y%m%d).json
+python -m locomo.score results/locomo_$(date +%Y%m%d).json --categories 1,2,3,4
+Expected:
+LoCoMo Categories 1-4
+─────────────────────
+Total: 1339/1540 (86.9%)
+Cost per run
+Each benchmark consumes API tokens. Approximate costs at current API prices (May 2026):
+Benchmark
+Embeddings
+Extraction (gpt-4o-mini)
+Answer (claude-opus-4-6)
+Total
+LongMemEval-S
+~$0.40
+~$1.20
+~$4.50
+~$6
+LoCoMo (1-4)
+~$0.80
+~$2.40
+~$9.00
+~$12
+LongMemEval-M (the medium variant, 50 questions per category × 5 = 250) costs roughly the same as -S; LongMemEval-L (the large variant, larger contexts per question) costs roughly 3× -S.
+Beyond 93.8% — what's the ceiling?
+A common question: if the Benchmark config gets 93.8%, what's the maximum you could squeeze out by stacking every opt-in quality feature?
+The five memory layers are a red herring here.
+ Events, Episodes, Facts, Beliefs, and Understanding all run in the Benchmark config — they're not opt-in features you can turn on for a higher score. The 93.8% number already uses every layer.
+What is opt-in:
+Opt-in addition
+Expected delta over 93.8%
+Cost / latency impact
+text-embedding-3-large
+ (3072 d)
+~+0.4 pp
+~3× embedding cost; ~+20 ms/embed
+Cohere 
+rerank-v3.5
+ cross-encoder
+~+1.5–2 pp
++$0.001/recall; +80-200 ms
+Verifier on every question type
+~+0.3–0.8 pp
++1 LLM call/answer; +800-1500 ms
+Async KG enrichment (
+gpt-4o
+)
+~+0.5–1 pp on multi-session
+~+10× write LLM cost; async
+gpt-4o
+ entity extractor (vs gpt-4o-mini)
+Marginal on benchmark
+~+10× extraction cost
+HyDE 3 passages on every type
+~+0.3–0.6 pp
++2 LLM calls/recall
+Multihop count=6, fanout=8
+~+0.5–1.2 pp on multi-session
++2 LLM calls/recall
+HNSW M=32, ef_search=200, no quantization
+~+0.5 pp
+~3× index memory
+Entity-vector seeding
+~+0.2–0.5 pp on entity-rich queries
+Negligible
+The deltas above are 
+individual A/B numbers
+ — we have not formally run the full bundle on LongMemEval-S. The deltas don't add cleanly: some interact constructively (reranker + bigger candidate pool); some are anti-correlated (HyDE 3-pass and wider multihop both generate query variants — usually one is enough). Our internal expectation for the full stack is 
++1 to +3 pp over 93.8% on LongMemEval-S
+ (so ~94.8–96.8%), but we publish the lower number because that's what we've actually measured end-to-end.
+Why the lower number is the headline:
+ Publishing the Benchmark config's 93.8% rather than a tuned-for-benchmark Max-Recall number is intentional. We want the published configuration to be the one we'd recommend to most users. A leaderboard-only configuration would beat its own published number; that doesn't help anybody who isn't on the leaderboard.
+The full Max-Recall config is documented under 
+Profiles & Presets → Max-Recall
+. If you do run it on LongMemEval-S, send us the result — we'll add a citation.
+Reproducibility caveats
+LLM output non-determinism.
+ The answer model is called with default sampling (
+temperature=0
+ in our harness but Anthropic's API doesn't fully suppress sampling-level variation). Expect ±2 questions of variance run-over-run on the same config. If you see ±5+ questions of variance, something is wrong.
+Embedding cache.
+ The 
+LruEmbeddingCache
+ is in-process. Running the benchmark twice without restarting the server will be ~30% faster the second time, but accuracy is identical. Restart between formal runs if you're measuring wall clock.
+Scheduler.
+ If you forget to disable the scheduler, you'll see accuracy degrade ~10-20 pp over a full run — and the failures will cluster in 
+single-session-assistant
+ (where the compaction-emitted summary chunks are highest-similarity to the queries). The startup log line 
+CORTEX_SCHEDULER_DISABLE set — background scheduler disabled
+ is your confirmation.
+Model drift.
+ As Anthropic and OpenAI update their hosted models, sample variance shifts. The 93.8% number was produced against 
+claude-opus-4-6
+ and 
+gpt-4o-mini
+ at their May-2026 weights. If we change the published model pinning, we'll cite the new number explicitly.
+Comparing to other memory layers
+If you're running CortexDB head-to-head against Mem0, LangMem, MemGPT, or Zep, use the 
+same
+ evaluation harness (not your own). The numbers in our paper come from the public LongMemEval evaluation script applied to each system's reference deployment with their published configuration.
+Specifically:
+Run all systems on the same hardware
+ — even though accuracy is hardware-invariant, latency comparisons require parity.
+Use each system's published config
+ — don't tune for one and not the others.
+Use the same answer model
+ — every system's published number is usually with a different answer LLM. If you want a fair comparison, swap each system to the same model (Claude Opus 4.6 or GPT-4o-2024) and re-run.
+Use the public eval script
+ — 
+longmemeval/run.py
+ ships with the benchmark dataset and applies the same prompts, parsing, and scoring to every system.
+Custom benchmark — tuning for your workload
+If LongMemEval-S doesn't reflect your workload (it's pretty conversation-heavy), you can build a custom benchmark using the same harness shape:
+# Pseudo-code: minimal custom benchmark
+from longmemeval.runner import Runner
+runner = Runner(base_url="http://localhost:3141", scope_prefix="ws:mybench_")
+for question in my_questions: # your domain questions
+ for memory in question["memories"]:
+ runner.store(memory)
+ answer = runner.ask(question["query"])
+ score = my_judge(answer, question["expected"])
+ print(score)
+Then sweep the recall-tuning knobs from 
+Recall Tuning
+ and find the config that maximizes accuracy on 
+your
+ data:
+for top_k in 20 40 80 160; do
+ CORTEX_GRAPH_RETRIEVAL_TOP_K=$top_k python my_bench.py > results_$top_k.txt
+done
+The recall pipeline is deliberately tunable for exactly this reason — the defaults are right for the workloads we benchmarked, but your workload is probably different in some dimension. The benchmark harness is a feedback loop for finding your local maximum.
+Next steps
+/docs/research/benchmark-paper
+ — the full paper with per-category breakdowns and ablations
+Profiles & Presets
+ — the Benchmark-validated profile as a copy-paste block
+Recall Tuning
+ — every knob the recall pipeline exposes for custom-benchmark tuning

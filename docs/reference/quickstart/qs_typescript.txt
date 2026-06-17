@@ -1,0 +1,300 @@
+TypeScript Quickstart - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Get CortexDB running with TypeScript in 5 minutes.
+TypeScript Quickstart
+Get from zero to stored-and-retrieved memory in 
+three lines
+. Then optionally drop down to the explicit auth flow.
+1. Install
+npm install cortexdbai
+# or: pnpm add cortexdbai / yarn add cortexdbai
+The npm package is 
+cortexdbai
+, not 
+cortexdb
+.
+ An unrelated SQL-database client owns the bare 
+cortexdb
+ name on npm — installing that will break in confusing ways. Always 
+cortexdbai
+. (If your AI coding agent autocompletes 
+cortexdb
+, correct it.)
+Requires Node 18+ (or any runtime with 
+fetch
+ and 
+AbortController
+).
+2. The three-line path — 
+V1Client.signup()
+import { V1Client } from "cortexdbai/v1";
+const client = await V1Client.signup();
+await client.experience(client.actor, {
+ text: "Just got off a call with Priya at Acme. They upgraded to 200 seats.",
+ observedAt: new Date().toISOString(),
+ idempotencyKey: "alice-chat-001",
+});
+const pack = await client.recall(client.actor, {
+ query: "What did we decide about Acme?",
+ diagnostics: "none",
+});
+console.log(pack.context_block);
+That's it. 
+signup()
+ posts to 
+/v1/auth/signup
+, gets a token + actor + scope, and returns a fully-wired client. No email, no card, no token management — works in browsers, Node, edge runtimes, anywhere 
+fetch
+ exists.
+The token lives in memory on 
+client
+ — persist it yourself (cookie, localStorage, env var) if you need it to survive a process restart:
+const client = await V1Client.signup();
+// Persist for next time:
+process.env.CORTEX_TOKEN = client.bearer!;
+process.env.CORTEX_ACTOR = client.actor;
+process.env.CORTEX_SCOPE = client.actor; // default scope = actor
+3. SDK call signatures
+The TypeScript SDK takes camelCase fields and flattens common cases:
+// Capture
+await client.experience(scope, {
+ text: "Acme upgraded to 200 seats.",
+ role: "user", // optional, default "user"
+ observedAt: new Date().toISOString(),
+ idempotencyKey: "alice-chat-002",
+ labels: ["acme", "renewal"],
+});
+// Recall
+const pack = await client.recall(scope, {
+ view: "holistic", // raw | granular | structured | holistic | descend
+ query: "What did we decide?",
+ include: ["beliefs", "facts", "episodes"],
+ budgets: { maxTokens: 4000 },
+ diagnostics: "none", // "summary" needs diagnostics.read cap (paid tier)
+});
+// Recall + LLM answer
+const ans = await client.answer(scope, {
+ question: "Did Acme renew?",
+ view: "holistic",
+ temporal: { natural: "last 30 days" },
+ diagnostics: "none",
+});
+The wire format (the raw JSON the API actually accepts on 
+POST /v1/experience
+) uses snake_case and a nested 
+content
+/
+context
+ envelope. If you're building a raw-
+fetch
+ client or hitting the REST API from another language, see the 
+Experience Envelope
+ reference.
+4. Explicit auth (for permanent identities)
+When you have a token from your IdP or your own backend (not the anonymous 
+signup()
+ token), construct the client explicitly:
+import { V1Client } from "cortexdbai/v1";
+const client = new V1Client({
+ apiUrl: "https://api-v1.cortexdb.ai",
+ actor: "user:
+[email protected]
+",
+ bearer: process.env.CORTEX_TOKEN!,
+});
+const me = await client.whoami();
+console.log(me.effectiveCapabilities);
+For service accounts that mint additional tokens via 
+POST /v1/auth/tokens
+, see the 
+Auth API reference
+.
+5. The 
+wait
+ parameter
+Default is async — 
+experience()
+ returns 
+202 Accepted
+ as soon as the WAL append succeeds. Pass 
+wait
+ to block until a later stage:
+await client.experience(scope, { text: "...", observedAt: now, idempotencyKey: "k" },
+ { wait: "indexed" }); // returns once BM25 + HNSW have the event
+Accepted values: 
+"captured"
+ | 
+"indexed"
+ | 
+"consolidated"
+. The SDK passes 
+wait
+ through as a query parameter; the server blocks the response until the requested stage completes (with a 30 s ceiling). For longer waits or subscribe-style consumption use 
+GET /v1/lifecycle/stream?event_id=…
+.
+6. Inspecting derived layers
+const facts = await client.facts(scope);
+const beliefs = await client.beliefs(scope);
+const concepts = await client.understanding(scope);
+What's available when.
+ Facts populate within ~5–30 s of write (LLM-extracted, flushed by the auto-layer scheduler). Beliefs aggregate from facts on the next scheduler tick — typically a minute or two. Understanding (synthesized concepts) is the slowest layer; it calls Claude Opus 4.6 on a per-topic basis and can take longer. Use Facts for read-after-write sanity checks; treat Beliefs / Understanding as eventually-consistent. See 
+Lifecycle
+ for the per-stage latency budget.
+What's next
+The Experience Envelope
+ — full shape, content kinds, directives
+The Five Memory Layers
+ — when to read which layer
+Scopes
+ — hierarchical addressing
+Bi-temporal queries
+ — 
+asOf
+, 
+validDuring
+, supersession chains
+Async + Lifecycle
+ — SSE stream + 
+wait
+ modes
+TypeScript SDK reference
+ — full method-by-method docs
+Cancellation + timeouts
+Every call uses 
+AbortController
+ under the hood:
+const client = new V1Client({
+ apiUrl: "https://api-v1.cortexdb.ai",
+ actor: "user:alice",
+ bearer: process.env.CORTEX_TOKEN!,
+ timeoutMs: 30_000,
+});
+You can also supply your own 
+fetch
+ (useful for tracing or retries):
+new V1Client({ apiUrl: "...", actor: "user:alice", fetch: myInstrumentedFetch });

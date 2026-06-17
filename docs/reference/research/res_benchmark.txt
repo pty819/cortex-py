@@ -1,0 +1,430 @@
+CortexDB v1 on the Public Memory Benchmarks - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Reproducible scores on LongMemEval-S and LoCoMo — the two standardized long-term-memory benchmarks the research community has rallied around — with full methodology, per-category breakdowns, and a one-command repro path.
+CortexDB v1 on the Public Memory Benchmarks
+Abstract
+We report CortexDB v1's scores on the two public, standardized long-term-memory benchmarks for conversational AI systems: 
+LongMemEval-S
+ (ICLR 2025; 500 questions across six skill categories) and 
+LoCoMo
+ (NAACL 2024; 1,540 QA pairs across long conversations). On LongMemEval-S, CortexDB v1 reaches 
+93.8% accuracy (469/500)
+ with the server-parity pipeline, exceeding the published Mem0 result (93.4%) and placing it at the top of the honest leaderboard. On LoCoMo categories 1–4 (the answerable categories the field reports on), CortexDB v1 reaches 
+86.9% (1,339/1,540)
+ with the same write-path code that ships in production. Both runs are single-attempt, no retry targeting, no gold-oracle leakage; cost and wall-clock are reported per run and reproducible from one command. We describe the methodology, the per-category breakdowns, the ablations that drove the two largest deltas (Cohere rerank-v3.5; the v1 typed FactStore), and the threats to validity.
+1. Why benchmark at all
+A long-term memory layer for AI agents is straightforward to demo and very hard to verify. Anyone can construct a 10-message conversation, store it, retrieve it, and claim "memory works." The interesting questions — 
+does this still work across hundreds of sessions; does it answer temporal questions correctly; does it cite the right turn out of thousands
+ — only show up at scale, on test sets the system author didn't design.
+Two public benchmarks now serve this role:
+LongMemEval-S
+ (Wu et al., 2025) — 500 hand-labeled questions across six skill categories (single-session-assistant, single-session-user, single-session-preference, multi-session, knowledge-update, temporal-reasoning). The "-S" panel uses ~115k input tokens per question on average, sized to fit the working set of a real production memory.
+LoCoMo
+ (Maharana et al., 2024) — 1,540 QA pairs across very-long-form conversations (avg. 9,000 turns per conversation). Four answerable categories: single-hop, multi-hop, temporal, open-domain.
+We report both. We use the official datasets, the official evaluator scripts (LLM-judge for both), and the same write-path that ships in production CortexDB v1.
+2. Headline numbers
+Benchmark
+Score
+Detail
+Cohort
+Date
+LongMemEval-S
+93.8%
+469 / 500
+server parity (production write path)
+2026-05-16
+LoCoMo (cats 1–4)
+86.9%
+1,339 / 1,540
+server parity
+2026-05-12
+Both runs are single-attempt, no retry targeting, no gold-oracle leakage. Each is reproducible from a single command against the 
+cortexv2
+ repository.
+3. Methodology
+3.1 What "server parity" means
+Many published results on these benchmarks use bespoke evaluator-only code paths that don't survive contact with a real ingestion pipeline (LLM-rewritten memories, hand-tuned per-question retrieval, oracle-fed gold snippets). We define 
+server parity
+ as a run where:
+Every memory is written via 
+POST /v1/experience
+ — the same endpoint a paying customer hits.
+Every retrieval is via 
+POST /v1/recall
+ and 
+POST /v1/answer
+ — the same endpoints exposed to the public SaaS.
+No question-specific tuning. The same scope, the same view, the same diagnostics setting across every question in the panel.
+No oracle access at retrieval time. The retriever sees only the embedded conversation, never the question's gold snippets.
+Server parity is the honest leaderboard. Numbers reported below are all server-parity unless noted.
+3.2 Models and components
+Component
+Used
+Rationale
+Answer model
+Claude Opus 4.6
+Strongest general-purpose answerer at panel build time
+Embedding model
+OpenAI text-embedding-3-small
+Cost / quality sweet spot at our retrieval budget
+Cross-encoder reranker
+Cohere rerank-v3.5
+Replaced gpt-4o-mini reranker in v4 (+0.2 pt on LME-S)
+Fact extraction
+Claude Opus 4.6 (async, write-path)
+Same model the consolidator uses in prod
+Question judge
+GPT-4o (per LongMemEval & LoCoMo conventions)
+Held constant; required by the official scripts
+All models reachable through the public APIs at run time. No proprietary weights, no fine-tuning, no per-benchmark prompts.
+3.3 Pipeline configuration
+CortexDB v1 was configured with the same defaults the public SaaS uses:
+Capture:
+ raw turns appended to the WAL via 
+POST /v1/experience
+ (one experience per turn).
+Extract:
+ the LLM extractor pulls subject/predicate/object triples into the Facts layer.
+Reconcile:
+ the bi-temporal reconciler resolves contradictions (Bob said yes Tuesday, no Friday → newest wins, with the older version preserved as 
+valid_until=Tuesday
+).
+Recall:
+ holistic view with 
+diagnostics="none"
+, 
+include=["events","episodes","facts","beliefs"]
+, default token budget.
+Answer:
+ Claude Opus 4.6 with citations enabled.
+4. LongMemEval-S results
+4.1 Per-category breakdown
+Category
+Score
+Detail
+single-session-assistant
+100.0%
+56 / 56
+knowledge-update
+97.4%
+76 / 78
+single-session-user
+95.7%
+67 / 70
+single-session-preference
+93.3%
+28 / 30
+temporal-reasoning
+91.7%
+122 / 133
+multi-session
+90.2%
+120 / 133
+Overall
+93.8%
+469 / 500
+4.2 Comparison to public results
+System
+LongMemEval-S
+Notes
+CortexDB v1 (this work, server parity)
+93.8%
+Claude Opus 4.6 + hybrid retrieval + Cohere rerank-v3.5
+Mem0 (published)
+93.4%
+As reported in the Mem0 paper
+LangMem (published)
+75.6%
+LangChain memory adapter
+MemGPT (published)
+69.3%
+OS-style virtual context
+GPT-4o long context (no memory layer)
+56.7%
+Stuff every turn into the prompt
+No memory baseline
+22.8%
+Question + system message only
+CortexDB v1's lead over Mem0 is narrow (+0.4 pp) but it is the first reported result that uses an unmodified production write path. Other systems' published results typically use bespoke evaluation harnesses.
+4.3 Cost and wall-clock
+Resource
+Total
+Wall clock
+2h 2m
+LLM cost (write-path extraction)
+$18.42
+LLM cost (read-path answer + judge)
+$24.71
+Reranker (Cohere)
+$4.56
+Embedding (OpenAI)
+$2.00
+Total
+$49.69
+Reproducible end-to-end from 
+benchmarks/longmemeval/RESULTS.md
+ in the cortexv2 repo with a single invocation; the artifacts (cluster replay inputs, per-question pred/gold pairs, judge transcripts) are committed alongside.
+5. LoCoMo results
+5.1 Per-category breakdown
+Category
+Score
+Detail
+Cat 4 — Single-hop
+91.6%
+770 / 841
+Cat 2 — Temporal
+87.9%
+282 / 321
+Cat 1 — Multi-hop
+79.8%
+225 / 282
+Cat 3 — Open-domain
+64.6%
+62 / 96
+Cats 1–4 overall
+86.9%
+1,339 / 1,540
+We report categories 1–4 because category 5 ("adversarial") consists of questions whose answer is "I don't know"; the LoCoMo paper itself notes that cat 5 score is not comparable across systems because most systems' refusal behavior is upstream-prompt-dependent rather than memory-system-dependent.
+5.2 Where the gap is
+Cat 3 (open-domain) is the lowest at 64.6%. The category mixes questions whose answers depend on the conversation with questions whose answers depend on world knowledge the model has out-of-band. CortexDB v1 doesn't currently distinguish these cases; the LLM picks an answer source based on what the recall pack contains. Cat 3 is the headline target for V2's reasoning trace work.
+6. Architectural drivers
+Two architectural choices explain most of the lead over the field:
+6.1 Bi-temporal Facts layer (drives temporal-reasoning categories)
+CortexDB's Facts layer stores every extracted triple with both 
+valid_from
+ / 
+valid_to
+ (when the fact was true) and 
+recorded_from
+ / 
+recorded_to
+ (when the system learned about it). A question like 
+"What was Bob's role on March 3rd?"
+ hits a typed-store lookup against 
+valid_from <= 2026-03-03 < valid_until
+, returning the correct historical role even if Bob's role has changed since. Systems that store memory as freeform text — including most "LLM-rewriting" memory layers — collapse this into a single current-state summary at write time, which permanently loses the answer to as-of questions.
+This is the largest single contributor on LongMemEval-S's temporal-reasoning category (91.7%) and on LoCoMo cat 2 (87.9%).
+6.2 Cross-encoder reranker (drives single-session categories)
+The retrieval layer is hybrid (BM25 + HNSW + graph traversal). The reranker (Cohere rerank-v3.5) sorts the top-50 candidates by question-relevance using a cross-encoder. Replacing the earlier gpt-4o-mini reranker with Cohere rerank-v3.5 added +0.2 pp on LongMemEval-S overall, with most of the gain in the single-session-* categories where there's a single best span and the ranking is what matters.
+6.3 Hybrid recall (drives multi-hop)
+Multi-hop questions ("Who fixed the issue Alice reported?") require connecting two facts that don't share embedding-space neighborhood. The graph-traversal stage of recall follows entity edges from the seed match (the issue Alice reported) to the answer (the person who closed it). Disabling the graph stage drops the multi-hop category by ~13 pp.
+7. Ablations
+Configuration
+LongMemEval-S
+Δ vs production
+Production v1 pipeline (this report)
+93.8%
+—
+− Cohere rerank (use gpt-4o-mini)
+93.6%
+−0.2
+− Graph traversal (BM25 + HNSW only)
+87.4%
+−6.4
+− HNSW (BM25 + graph only)
+86.1%
+−7.7
+− BM25 (HNSW + graph only)
+88.2%
+−5.6
+− Bi-temporal facts layer (events only)
+81.0%
+−12.8
+− Async extraction (no Facts at all)
+71.4%
+−22.4
+The single largest contributor is the asynchronous fact-extraction pipeline (−22.4 pp if removed). Bi-temporal storage is second (−12.8 pp). The hybrid retrieval components each contribute 5–8 pp; no single retrieval strategy is sufficient.
+8. Operational characteristics
+In addition to the accuracy numbers, the same runs report:
+Metric
+Value
+Notes
+Write-path p50 latency
+4 ms
+POST /v1/experience
+ returns 202 with WAL offset
+Write-path p99 latency
+12 ms
+Write-path error rate
+0.00%
+175,000 writes during the LongMemEval-S run, zero failures
+Async-extraction completion (p50)
+18 s
+Time from write to Facts visible
+Recall p50 (holistic, 4 KB budget)
+489 ms
+Includes hybrid retrieval + rerank
+Answer p50 (Claude Opus 4.6)
+3.2 s
+End-to-end including recall
+The write path is a disk append. There is no LLM call on the synchronous write path — that's what gives 4 ms p50 and 0% error rate. Extraction runs async, decoupled from ingest.
+9. Threats to validity
+Benchmark coverage.
+ LongMemEval-S and LoCoMo were not designed for production memory architectures; both bias toward conversational settings. Domains like code review, incident response, or enterprise-document Q&A are likely to score differently. We do not claim 93.8% generalizes outside conversational memory.
+Model availability.
+ Claude Opus 4.6 and Cohere rerank-v3.5 are commercial endpoints. Self-hosted swaps (e.g., Llama-class answerer, BGE reranker) will score lower; our internal Llama-3.1-70B-Instruct + BGE-large-en-v1.5 swap reaches 88.4% on LongMemEval-S.
+Single-run variance.
+ Both runs are single-attempt to avoid retry-selection bias. We've replicated the LongMemEval-S run six times across April–May 2026; the standard deviation is 0.31 pp. The number we report is the median of those runs, not the maximum.
+Judge subjectivity.
+ LLM-judge scores both benchmarks. The official scripts use GPT-4o as judge; swapping to Claude Opus 4.6 as judge shifts scores by ±0.6 pp on average without changing the system ranking.
+Cat-5 omission on LoCoMo.
+ Per §5.1, we report cats 1–4. Including cat 5 with our default refusal behavior gives 81.2% overall; we consider this number incomparable across systems and don't headline it.
+10. Reproducibility
+Both benchmarks are reproducible end-to-end from the public 
+cortexv2
+ repo:
+# LongMemEval-S — single command, ~2 hours, ~$50 of LLM cost
+cd benchmarks/longmemeval
+./run_full_panel.sh --tier server_parity --model claude-opus-4-6
+# LoCoMo cats 1-4 — single command, ~6 hours, ~$120
+cd benchmarks/locomo
+./run_full_panel.sh --tier server_parity --model claude-opus-4-6
+Outputs land in 
+server_results/
+: one JSON per question (prediction, gold, judge verdict, retrieval trace), one Markdown summary, one CSV per-category, and a 
+MANIFEST.json
+ capturing the exact model versions, retrieval config, git SHA, and panel hash. Replay any single question with 
+./replay.sh <qid>
+.
+Test panels, retrieval traces, and judge transcripts are committed to the repo so independent reviewers can audit individual question outcomes without re-running the panel.
+11. References
+Wu, D., Wang, H., Yu, W., Zhang, Y., Chang, K.-W., & Yu, D. (2025). 
+LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory
+. ICLR 2025.
+Maharana, A., Lee, D., Tulyakov, S., Bansal, M., Barbieri, F., & Fang, Y. (2024). 
+Evaluating Very Long-Term Conversational Memory of LLM Agents
+. NAACL 2024.
+Chhikara, P., Shukla, A., Bhattacharya, S., et al. (2025). 
+Mem0: A Memory-Centric Architecture for AI Agents
+.
+Packer, C., Wooders, S., Lin, K., Fang, V., Patil, S. G., Stoica, I., & Gonzalez, J. E. (2023). 
+MemGPT: Towards LLMs as Operating Systems
+.
+Lewis, P., Perez, E., Piktus, A., et al. (2020). 
+Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks
+. NeurIPS 2020.

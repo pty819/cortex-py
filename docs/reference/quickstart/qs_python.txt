@@ -1,0 +1,307 @@
+Python Quickstart - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Get CortexDB running with Python in 5 minutes.
+Python Quickstart
+Get from zero to a working stratified pack in under 5 minutes.
+1. Install
+pip install cortexdbai
+Package
+Name
+PyPI package
+cortexdbai
+Python import
+cortexdb.v1
+Requires Python 3.9+. 
+requests
+ is a runtime dependency — 
+pip install requests
+ if your environment doesn't already have it.
+2. Sign up — no email, no card
+The fastest way to get a working token is one anonymous POST. No form, no email, no redirect.
+import requests
+r = requests.post("https://api-v1.cortexdb.ai/v1/auth/signup", json={}).json()
+TOKEN = r["token"] # PASETO v4 bearer (7-day TTL on the free tier)
+ACTOR = r["user_id"] # e.g. "user:u_019e..."
+SCOPE = r["scope"] # your default scope path
+print(r["expires_at"]) # ISO 8601; renew before this
+If you already have a permanent CortexDB account, your IdP issues PASETO tokens the same way — substitute its URL for 
+/v1/auth/signup
+. The CLI command 
+cortexdb auth tokens mint
+ (see the 
+Auth API reference
+) is the operator-side equivalent.
+3. Open a client
+from cortexdb.v1 import V1Client
+client = V1Client(
+ api_url="https://api-v1.cortexdb.ai",
+ actor=ACTOR,
+ bearer=TOKEN,
+)
+print(client.whoami()["effective_capabilities"])
+4. Capture an experience
+result = client.experience(
+ scope=SCOPE,
+ text="Just got off a call with Priya at Acme. They upgraded to 200 seats.",
+ role="user",
+ observed_at="2026-05-16T10:42:00Z",
+ idempotency_key="alice-chat-001",
+)
+print(result["event_id"]) # "evt_01HX..."
+print(result["status"]) # "captured"
+Note.
+ Earlier examples passed 
+modality="conversation"
+ — the v1 SDK now infers modality from the call. Don't pass it. Pass 
+role=
+ and the SDK builds the right envelope.
+Returns 
+202 Accepted
+ as soon as the WAL append succeeds. Pass 
+wait="indexed"
+ to block in Python until BM25 + HNSW indexes have the event:
+result = client.experience(
+ scope=SCOPE,
+ text="...",
+ observed_at="2026-05-16T10:42:00Z",
+ idempotency_key="alice-chat-002",
+ wait="indexed",
+)
+Heads up.
+ The Python SDK implements 
+wait="indexed"
+ as client-side polling against the lifecycle stream. Other SDKs and raw REST clients always get a 202 immediately — they need to subscribe to 
+GET /v1/lifecycle/stream?event_id=evt_…
+ and watch for the 
+indexed
+ event themselves. See 
+Lifecycle
+.
+5. Recall a stratified pack
+pack = client.recall(
+ scope=SCOPE,
+ view="holistic",
+ query="What did we decide about Acme's renewal?",
+ include=["beliefs", "facts", "episodes"],
+ budgets={"max_tokens": 4000},
+ diagnostics="none", # <-- on the free tier
+)
+print(pack["context_block"])
+for fact in pack["layers"].get("facts", []):
+ print(fact["predicate"], "=", fact["object"]["value"])
+Free-tier capabilities.
+diagnostics="summary"
+ and 
+diagnostics="full"
+ require the 
+diagnostics.read
+ capability, which the free-tier token doesn't include. Pass 
+diagnostics="none"
+ (or omit the field once the SDK default is corrected) on the free tier; bump to 
+summary
+ on a paid token when you want timing + plan attribution.
+Same story for 
+view
+: free-tier tokens hold 
+scope.read.local
+, 
+scope.read.holistic
+, and 
+scope.read.descend
+, so 
+view="holistic"
+ works out of the box. The accepted values are 
+raw
+, 
+granular
+, 
+structured
+, 
+holistic
+, 
+descend
+ — there is no 
+local
+ view (older docs may have shown that; it's not in the v1 surface).
+6. Recall + LLM in one call
+answer = client.answer(
+ scope=SCOPE,
+ question="Did Acme renew?",
+ view="holistic",
+ temporal={"natural": "last 30 days"},
+ diagnostics="none",
+)
+print(answer["answer"])
+for c in answer["citations"]:
+ print(f" {c['marker']} → {c['layer']}:{c['id']}")
+answer()
+ is the killer-feature endpoint — natural-language Q&A with full citations back to the events that supported the answer. Build your UI around this.
+7. Inspect why a belief exists
+Heads up.
+ Facts populate within ~5–30 s of a write (LLM-extracted, flushed by the auto-layer scheduler). Episodes follow facts as the segmenter runs on the next tick. Beliefs and Understanding are aggregated/synthesized async — typically minutes for beliefs, longer for the full Understanding pass (Claude Opus 4.6, deferred to the synthesizer). Use the Facts layer (
+client.facts(scope=…)
+) as a smoke-test that extraction is running. See 
+Lifecycle
+ for the per-stage budget.
+beliefs = client.beliefs(scope=SCOPE)
+if beliefs["items"]:
+ top = beliefs["items"][0]
+ trail = client.belief_why(top["belief_id"])
+ print(trail["narrative"])
+What's next
+The Experience Envelope
+ — full shape, content kinds, directives
+The Five Memory Layers
+ — when to read which layer
+Scopes
+ — hierarchical addressing
+Bi-temporal queries
+ — 
+as_of
+, 
+valid_during
+, supersession chains
+Async + Lifecycle
+ — SSE stream + 
+?wait=
+ modes
+Python SDK reference
+ — full method-by-method docs
+Async variant
+For 
+asyncio
+-based apps, use 
+AsyncV1Client
+ — same surface, all methods awaitable:
+from cortexdb.v1 import AsyncV1Client
+async with AsyncV1Client(
+ api_url="https://api-v1.cortexdb.ai",
+ actor=ACTOR,
+ bearer=TOKEN,
+) as client:
+ pack = await client.recall(scope=SCOPE, view="holistic", diagnostics="none")

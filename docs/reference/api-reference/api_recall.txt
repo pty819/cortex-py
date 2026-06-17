@@ -1,0 +1,348 @@
+POST /v1/recall - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Read a stratified pack from CortexDB. Returns layers, context block, provenance, and diagnostics.
+POST /v1/recall
+The single read endpoint. Returns a 
+stratified pack
+ — the requested memory layers (events, episodes, facts, beliefs, understanding) plus a narrative 
+context_block
+, full 
+provenance
+, and 
+diagnostics
+. Replaces the older 
+/v1/recall
+ and 
+/v1/search
+.
+For Recall + LLM in one call, use 
+POST /v1/answer
+.
+Capability
+scope.read.local
+ (always)
+scope.read.holistic
+ when 
+view=holistic
+scope.read.descend
+ when 
+view=descend
+diagnostics.read
+ when 
+diagnostics ≠ "none"
+Request
+{
+ "scope": "org:acme/dept:eng/user:alice",
+ "view": "holistic",
+ "query": "What did we decide about the Q3 launch?",
+ "include": ["beliefs", "facts", "episodes"],
+ "exclude_content": false,
+ "temporal": {
+ "as_of": null,
+ "valid_during": null,
+ "natural": "last 30 days",
+ "reference_date": null
+ },
+ "filters": {
+ "AND": [
+ { "observed_actor": { "in": ["user:alice", "agent:planner_v3"] } },
+ { "confidence": { "gte": 0.6 } }
+ ]
+ },
+ "budgets": {
+ "max_tokens": 4000,
+ "per_layer_limits": { "events": 0, "episodes": 5, "facts": 20, "beliefs": 10, "understanding": 3 }
+ },
+ "citation_mode": "inline_with_markers",
+ "diagnostics": "summary",
+ "stream": false,
+ "idempotency_key": "recall-alice-q3-001"
+}
+Field
+Type
+Notes
+scope
+string
+Required.
+view
+enum
+raw
+ / 
+granular
+ / 
+holistic
+ / 
+descend
+ / 
+structured
+. Default 
+holistic
+.
+query
+string
+Optional natural-language query. Without it, recall returns the bounded slice defined by 
+temporal
+ + 
+filters
+.
+include
+string[]
+Layers to populate; absent = all per the view.
+exclude_content
+bool
+Omit large 
+content
+/
+summary
+ strings; return IDs + metadata only.
+temporal
+object
+as_of
+, 
+valid_during
+, 
+natural
+, 
+reference_date
+. See 
+Bi-temporal model
+.
+filters
+object
+Nested 
+AND
+/
+OR
+ boolean tree over per-record fields.
+budgets.max_tokens
+int
+Knapsack target across the pack.
+budgets.per_layer_limits
+map
+Hard caps per layer.
+citation_mode
+enum
+none
+, 
+inline_with_markers
+, 
+block_at_end
+, 
+structured_only
+.
+diagnostics
+enum
+none
+ (default for non-admin), 
+summary
+, 
+full
+.
+stream
+bool
+See 
+POST /v1/recall/stream
+ below.
+idempotency_key
+string
+Repeated calls within 60 s return the same 
+pack_id
+ and cached pack.
+Views
+View
+What it does
+Traversal cap
+raw
+Single scope, full event payloads
+none
+granular
+Single scope, all layers
+none
+structured
+Single scope, facts + beliefs only
+none
+holistic
+Scope 
+plus ancestors
+ in the path
+scope.read.holistic
+descend
+Scope 
+plus descendants
+scope.read.descend
+Response — the Stratified Pack
+{
+ "pack_id": "pack_01HX...",
+ "scope": "org:acme/dept:eng/user:alice",
+ "view": "holistic",
+ "as_of": "2026-05-15T10:42:09Z",
+ "layers": {
+ "events": [ /* MemoryEvent records */ ],
+ "episodes": [ /* Episode records */ ],
+ "facts": [ /* Fact records (bi-temporal triples) */ ],
+ "beliefs": [ /* Belief records with confidence + supports */ ],
+ "understanding": [ /* Concept nodes */ ]
+ },
+ "context_block": "On 2026-05-13 the team upgraded Acme to 200 seats [1]. Earlier that quarter the POC was extended (ep_01HX...) [2]. ...",
+ "provenance": {
+ "trail": [ { "step": "plan", "filter": "...", "kept": 318 }, ... ],
+ "citations": { "[1]": { "layer": "fact", "id": "fact_01HX..." }, "[2]": { "layer": "episode", "id": "ep_01HX..." } }
+ },
+ "diagnostics": {
+ "time_ms": { "plan": 4, "fetch": 36, "score": 18, "pack": 9 },
+ "layers_requested": ["beliefs", "facts", "episodes"],
+ "policy_attribution": [ { "capability": "scope.read.holistic", "decided_by_tier": "scope" } ]
+ }
+}
+pack_id
+ can be reused by 
+/v1/answer
+ via 
+use_pack_id
+ to skip recall (60 s TTL).
+POST /v1/recall/stream
+Server-Sent Events. Same request body. Per-layer events arrive as soon as each layer scores; 
+done
+ event carries the full pack.
+event: plan
+data: { "scope": "...", "filters": "...", "estimated_layers": ["facts", "beliefs"] }
+event: layer
+data: { "layer": "facts", "items": [...] }
+event: layer
+data: { "layer": "beliefs", "items": [...] }
+event: context_block
+data: { "text": "..." }
+event: provenance
+data: { "trail": [...], "citations": {...} }
+event: diagnostics
+data: { "time_ms": {...} }
+event: done
+data: { "pack_id": "pack_01HX..." }
+See 
+Streaming
+ for reconnection + backpressure semantics.

@@ -1,0 +1,235 @@
+The Five Memory Layers - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+How CortexDB models memory across Events, Episodes, Facts, Beliefs, and Understanding, and why single-layer systems fail.
+What are the five memory layers in AI?
+The five memory layers in AI organize memory into strictly addressable tiers: Events, Episodes, Facts, Beliefs, and Understanding, isolating raw observations from probabilistic AI derivations.
+CortexDB—a long-term memory layer for AI agents built by Apache Cassandra co-creator Prashant Malik—queries all five of these layers simultaneously during Cognitive Recall to fetch a unified StratifiedPack. This architecture is built over a lossless event-sourced memory foundation.
+Why memory layers matter
+Knowledge is what is true about the world and can be retrieved using a simple vector database, while memory is what is true about a specific agent and requires multi-layered context. Memory systems typically rely on a single flat layer of LLM-rewritten summaries. Single-layer designs collapse raw observations ("the user clicked cancel") and probabilistic conclusions ("the user dislikes the UI") into the exact same vector space.
+Mem0 and Zep rely on flat episodes, which destroys confidence as a first-class metric. CortexDB preserves the "why" behind every piece of information by separating lossless capture (Events) from structured assertions (Facts), probabilistic claims (Beliefs), and conceptual synthesis (Understanding). Agents can confidently traverse from a high-level belief down to the exact immutable events that generated it.
+How CortexDB thinks about memory layers
+CortexDB treats memory as a derivation graph starting strictly from raw, immutable Events. Events represent the lossless capture of experience. The system groups bounded spans of interaction into Episodes.
+Extraction pipelines identify triple-shaped, bi-temporal assertions called Facts. Facts can conflict, so the system consolidates them into Beliefs (probabilistic claims that carry a 
+supports: [fact_id, ...]
+ array linking directly back to underlying evidence). Understanding provides synthesised higher-level summaries, lagging behind real-time events by minutes to hours.
+Cognitive Recall retrieves relevant context across all five layers simultaneously. The retrieval engine filters results across hierarchical scopes, ensuring the StratifiedPack blends immediate raw observations with authorized long-term conceptual understanding.
+What does each memory layer hold?
+Layer
+Shape
+Derived from
+Confidence
+Typical retrieval use
+Events
+Immutable append-only records (
+event_id
+, payload, scope, 
+observed_at
+, 
+recorded_at
+)
+Ingest (write path)
+1.0 (raw)
+Verbatim quotes; audit trail; replay
+Episodes
+Bounded sequences of related events (
+episode_id
+, member events, summary)
+Events (async)
+1.0 (structural)
+Session/conversation context
+Facts
+Triple-shaped bi-temporal claims (
+subject
+, 
+predicate
+, 
+object
+, validity window)
+Episodes + extraction (async)
+0.0–1.0 per extraction
+Structured Q&A; timelines
+Beliefs
+Probabilistic claims with 
+supports: [fact_id, ...]
+Facts (async consolidation)
+0.0–1.0 per consolidation
+"What do you currently think about X?"
+Understanding
+Higher-order synthesised summaries, versioned
+Facts + Beliefs (async, lagging)
+implicit
+Long-horizon overviews; briefings
+Every layer except Events is derived. Every derived record carries a 
+supports
+ chain back through the layers to the immutable events that produced it. That chain is what makes evidence traceable and forgetting honest.
+What five memory layers enable
+Evidence traceability:
+ Every Belief points to the underlying Facts, and every Fact points to the Episodes and Events. Agents can strictly audit why they believe something by following the evidence chain.
+Safe schema evolution:
+ CortexDB can rebuild Facts, Beliefs, and Understanding directly from raw events if extraction models improve next year.
+Deep temporal reasoning:
+ CortexDB achieves 93.8% on LongMemEval-S (beating Mem0 at 93.4%), and our approach guarantees that agents can accurately reconstruct historical state across deep history.
+How CortexDB compares on memory layers
+Mem0 relies exclusively on LLM summaries on the write path, discarding original interaction data immediately. Zep extracts basic facts but tightly couples them to conversation history. CortexDB leverages a 4-channel hybrid retrieval (BM25 + HNSW vectors + graph traversal + cross-encoder reranking) architecture that safely reads across five asynchronously derived layers, decoupling read performance from extraction complexity.
+System
+Foundation
+Extraction
+Traceability
+Derived layers
+CortexDB
+Lossless event-sourced log
+Async, non-blocking
+Full 
+supports
+ chain
+Facts, Beliefs, Understanding
+Mem0
+LLM summaries
+On write path
+None (original discarded)
+None (flat vector space)
+Zep
+Conversations
+On write path
+Partial
+Facts only
+FAQ
+What are the five memory layers in CortexDB?
+The five memory layers in CortexDB are Events, Episodes, Facts, Beliefs, and Understanding. Events are raw immutable observations, Episodes are bounded sequences, Facts are triple-shaped assertions, Beliefs are probabilistic claims, and Understanding is synthesised higher-level summary.
+How are Beliefs different from Facts?
+Facts are triple-shaped bi-temporal assertions extracted from events. Beliefs are probabilistic claims that consolidate correlated facts. Every Belief carries a supports array that links to the underlying Facts, preserving the evidence chain.
+Why doesn't CortexDB use episodic, semantic, and procedural memory?
+Episodic, semantic, and procedural memory is a cognitive science triad that does not map cleanly to database architecture. CortexDB uses a five-layer technical architecture (Events, Episodes, Facts, Beliefs, Understanding) that maps directly to storage primitives and derivation pipelines.
+Does the five-layer model slow down writes?
+No. CortexDB is a lossless event-sourced memory system with no LLM on the write path. The initial write simply appends an Event and returns immediately. Facts, Beliefs, and Understanding are derived asynchronously.
+What is a StratifiedPack?
+A StratifiedPack is the unified output returned by Cognitive Recall. It merges relevant context retrieved across all five memory layers into a single structured response for the agent.
+Event Sourcing
+Why CortexDB stores raw events instead of LLM-rewritten summaries.
+Bi-temporal Model
+How Facts and Beliefs retain full historical state and validity windows.

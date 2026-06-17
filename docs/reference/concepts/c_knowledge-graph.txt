@@ -1,0 +1,192 @@
+Knowledge Graph - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+How CortexDB constructs an entity graph from raw events, connecting isolated fragments into rich contextual memory.
+What is the Knowledge Graph for AI memory?
+The Knowledge Graph in AI memory is an entity graph constructed natively from an agent's lossless event-sourced memory, where nodes represent entities like people, projects, and customers, and edges represent their relationships.
+CortexDB—a long-term memory layer for AI agents built by Apache Cassandra co-creator Prashant Malik—uses this native graph traversal as a core component of its 4-channel hybrid retrieval (BM25 + HNSW vectors + graph traversal + cross-encoder reranking).
+Why connected context matters
+Knowledge is what is true about the world and can be retrieved effectively via simple vector search, while memory is what is true about a specific agent and demands connected context. Pure vector databases treat facts as isolated text fragments. Vector-only architectures break down when an agent asks relationship questions like "who owns this service" or "what changed before this incident". Single-channel approaches miss unconnected facts that have not yet been linked textually.
+How CortexDB thinks about graph memory
+CortexDB treats graph memory as an emergent property of the immutable event log. The entity graph is derived entirely from the underlying event stream. Entities emerge as new records are observed, and relationship edges form as new predicates are ingested. The retrieval engine ensures the Knowledge Graph strictly respects bi-temporal constraints and hierarchical scopes, preventing agents from traversing edges they are not authorized to see.
+What does the entity graph look like?
+Entities are typed nodes (
+person
+, 
+org
+, 
+service
+, 
+project
+, 
+incident
+, …). Edges are predicates extracted from events and carry the same bi-temporal validity window as Facts.
+(person: Priya Rao) ──[works_at, valid 2024-01-→ ]──→ (org: Acme Corp)
+ │ │
+ │ │
+ └─[owns, valid 2026-02-→ ]──→ (project: Q3 Renewal) ─[has_status, "negotiating"]
+A graph traversal query during Cognitive Recall might look like:
+{
+ "query": "who's negotiating the Acme renewal",
+ "graph": {
+ "seed_entities": ["ent_acme_corp"],
+ "max_hops": 2,
+ "predicates": ["owns", "has_status", "works_at"],
+ "as_of": "2026-05-15T00:00:00Z"
+ }
+}
+The traversal respects hierarchical scopes (an agent that cannot read 
+org:acme/dept:sales
+ will never see edges that originate there) and bi-temporal validity (an 
+as_of
+ query skips edges whose 
+valid_to
+ has closed).
+What the Knowledge Graph enables
+Connected context:
+ Agents can natively traverse from a customer record directly to related support tickets, decisions, and system logs.
+Relationship discovery:
+ Applications can surface implicit workflows and ownership graphs that span across multiple isolated conversations.
+Contextual grounding:
+ Cognitive Recall utilizes graph traversal alongside vectors to fetch deeply connected historical context.
+How CortexDB compares to vector databases
+Neo4j offers a native graph database, but it lacks built-in bi-temporal history or out-of-the-box LLM context fusion. Memory frameworks like Mem0 and Pinecone completely lack native graph traversal, relying exclusively on single dense vector indexes. CortexDB achieves 93.8% on LongMemEval-S (beating Mem0 at 93.4%), and our approach guarantees that connected context is always fused seamlessly with other retrieval signals. Cognitive Recall utilizes this combined signal to fetch deeply connected historical context.
+FAQ
+What is the Knowledge Graph in CortexDB?
+The Knowledge Graph is a native entity graph constructed directly from the event log. It maps relationships between people, projects, and entities to provide connected context during retrieval.
+Why do AI agents need a Knowledge Graph?
+Vector databases treat facts as isolated fragments. A Knowledge Graph allows agents to traverse relationships, answering complex questions about ownership, dependencies, and historical changes that vector search alone misses.
+Does CortexDB use Neo4j internally?
+No. CortexDB implements its own native graph traversal built directly over the event-sourced log. CortexDB is not a wrapper around Neo4j.
+How does graph retrieval fit into Cognitive Recall?
+Graph traversal is one of the four channels in CortexDB's hybrid retrieval system. Cognitive Recall traverses the entity graph and fuses the results with BM25, vector search, and cross-encoder reranking.
+Can agents traverse unauthorized graph edges?
+No. The Knowledge Graph respects hierarchical scopes and bi-temporal validity. Agents can only traverse edges and view entities that their authorization policy explicitly permits.
+Hybrid Retrieval
+See how connected context fits into retrieval workflows.
+The Five Memory Layers
+How CortexDB models Events, Episodes, Facts, Beliefs, and Understanding.

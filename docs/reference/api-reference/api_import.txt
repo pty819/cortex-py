@@ -1,0 +1,225 @@
+Import - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Native importers for Mem0, Zep, Letta, OpenAI memory, and generic JSONL.
+Import
+Five importers, one job lifecycle. All accept a 
+scope template
+ (placeholders filled per row) and return 
+202 Accepted
+ with a 
+lifecycle_stream
+ URL. Track progress via 
+GET /v1/import/
+ or subscribe to 
+import_progress
+ / 
+import_complete
+ / 
+import_error
+ lifecycle events.
+Stability: 
+beta
+ — mapping tables track source-system version drift.
+POST /v1/import/jsonl — Generic
+{
+ "scope_template": "org:acme/user:{user_id}",
+ "lines": [
+ "{\"user_id\":\"alice\",\"modality\":\"conversation\",\"content\":{\"kind\":\"message\",\"role\":\"user\",\"text\":\"...\"},\"context\":{\"observed_at\":\"...\"},\"idempotency_key\":\"k1\"}",
+ "..."
+ ]
+}
+Each line must be a valid experience envelope minus 
+scope
+ (which the server fills from the template using fields in each line).
+Response — 202
+{
+ "import_id": "imp_01HX...",
+ "status": "running",
+ "estimated_items": 1284,
+ "lifecycle_stream": "/v1/lifecycle/stream?import_id=imp_01HX..."
+}
+POST /v1/import/mem0 — Mem0 exports
+{
+ "scope_template": "org:acme/user:{user_id}",
+ "rows": [
+ { "user_id": "alice", "memory": "...", "timestamp": "...", "metadata": {...} }
+ ]
+}
+Map: 
+memory → content.text
+, 
+timestamp → context.observed_at
+, 
+metadata → context.labels
+ + 
+context.intent
+.
+POST /v1/import/zep — Zep exports
+{
+ "scope_template": "org:acme/user:{user_id}",
+ "rows": [
+ { "user_id": "alice", "fact": "...", "valid_from": "...", "valid_to": "..." }
+ ]
+}
+Zep facts land as 
+triples
+ via 
+content.kind = "triple"
+. Bi-temporal fields preserved.
+POST /v1/import/letta — Letta exports
+{
+ "scope": "org:acme/user:alice",
+ "rows": [
+ { "block_label": "...", "value": "...", "limit": 2000 }
+ ]
+}
+Letta blocks land as 
+modality: "document"
+ with the block label as 
+context.intent
+.
+POST /v1/import/openai — OpenAI memory exports
+{
+ "scope": "org:acme/user:alice",
+ "rows": [
+ { "id": "...", "content": "...", "created_at": "..." }
+ ]
+}
+GET /v1/import/
+{
+ "import_id": "imp_01HX...",
+ "status": "completed",
+ "imported": 1284,
+ "failed": 0,
+ "elapsed_ms": 84000,
+ "lifecycle_stream": "/v1/lifecycle/stream?import_id=imp_01HX..."
+}
+status
+ ∈ 
+{ running, completed, failed, cancelled }
+.

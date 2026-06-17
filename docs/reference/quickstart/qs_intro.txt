@@ -1,0 +1,244 @@
+What is CortexDB? - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+The long-term memory platform for AI systems, focused on integrations, context, and durable memory workflows.
+CortexDB
+CortexDB is the long-term memory platform for AI systems.
+It helps teams give agents and AI applications durable memory, connected context,
+and practical ways to integrate memory into real workflows.
+Whether you are building an internal copilot, a support assistant, an engineering
+knowledge layer, or a companion-style application, CortexDB is designed to help
+memory become a first-class part of the product.
+Why CortexDB?
+AI systems often struggle with continuity. They lose context between sessions,
+forget important prior decisions, and cannot easily draw from the full working
+memory of a team, product, or organization.
+Teams use CortexDB when they want to:
+give agents durable memory beyond a single conversation
+connect knowledge across tools like Slack, GitHub, and Jira
+provide richer context to workflows, copilots, and assistants
+support multi-tenant and enterprise use cases
+make memory accessible through SDKs, APIs, and MCP-compatible tools
+Key Advantages
+Built for AI memory
+CortexDB is designed around memory workflows such as storing context,
+retrieving it later, and connecting related information across sessions.
+Integration ready
+Use CortexDB with popular agent frameworks, SDKs, connectors, and
+MCP-compatible tools.
+Connected context
+CortexDB helps applications work with relationships, history, and related
+context instead of isolated text fragments.
+Operational workflows
+Support developer tools, support workflows, research assistants, copilots,
+and customer-facing AI products from one memory platform.
+Multi-tenant and governed
+Organize memory by tenant, team, or application and support enterprise
+operational requirements.
+Cloud platform
+Get started quickly with the CortexDB cloud platform, designed for
+production workloads from day one.
+How CortexDB fits into your stack
+At a high level, CortexDB sits between your applications and the knowledge they
+need to retain and retrieve.
+It commonly works with:
+application events and user interactions
+chat, ticketing, and collaboration systems
+code and engineering systems
+agent frameworks and orchestration layers
+APIs, SDKs, and MCP-based tool environments
+How It Works
+Connect
+Connect CortexDB to your app, framework, or workflow using SDKs, APIs,
+connectors, or MCP.
+Capture
+Store the interactions, events, documents, and decisions your AI system
+should be able to remember later.
+Retrieve
+Retrieve relevant context during prompts, workflows, agent runs, and user
+interactions.
+Operate
+Use CortexDB as part of production AI systems that need persistent memory,
+cross-tool context, and enterprise-ready workflows.
+Integrations and plugins
+CortexDB integrates with 
+53 tools
+ across the AI ecosystem — 21 agent frameworks, 6 orchestration platforms, 4 no-code builders, 6 LLM providers, and 16 data connectors.
+Agent Frameworks (21)
+LangChain · LangGraph · LlamaIndex · CrewAI · AG2 (AutoGen) · AutoGen ·
+Agno · DSPy · Smolagents · CAMEL-AI · PydanticAI · OpenAI Agents ·
+Google ADK · Letta · BeeAI · NeMo Guardrails · Instructor · ControlFlow ·
+Eliza OS · Hermes · OpenClaw
+Orchestration (6)
+Temporal · n8n · Prefect · Airflow · Zapier · Make.com
+No-Code Platforms (4)
+Vercel AI SDK · Flowise · Dify · Mastra
+LLM Providers (6)
+Ollama · Groq · Together AI · Fireworks AI · vLLM · DeepInfra
+Data Connectors (16)
+Slack · GitHub · GitLab · Jira · Linear · Confluence · Notion ·
+PagerDuty · Discord · Microsoft Teams · Google Workspace · Salesforce ·
+HubSpot · Zendesk · Intercom · ServiceNow
+Access Surfaces
+Python SDK
+TypeScript SDK
+REST API
+MCP server
+Quick Example
+import requests
+from cortexdb.v1 import V1Client
+# 1. Mint a v1 token (one-shot signup — no email, no card)
+r = requests.post("https://api-v1.cortexdb.ai/v1/auth/signup", json={}).json()
+token, user_id, scope = r["token"], r["user_id"], r["scope"]
+# 2. Open a client
+client = V1Client(
+ api_url="https://api-v1.cortexdb.ai",
+ actor=user_id,
+ bearer=token,
+)
+# 3. Capture an experience
+client.experience(
+ scope=scope,
+ text="We decided to migrate from PostgreSQL to CockroachDB for the payments service. Timeline is Q2 2026.",
+ observed_at="2026-05-16T10:42:00Z",
+ idempotency_key="decision-payments-001",
+)
+# 4. Recall a stratified pack (events + episodes + facts + beliefs + understanding)
+pack = client.recall(
+ scope=scope,
+ query="What database are we using for payments?",
+ view="holistic",
+ include=["beliefs", "facts", "episodes"],
+)
+print(pack["context_block"])
+Next Steps
+Python Quickstart
+Get running in 5 minutes with the Python SDK.
+Integrations
+See how CortexDB fits into popular agent and application frameworks.
+REST API
+Direct HTTP API reference with curl examples.

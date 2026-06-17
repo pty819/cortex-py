@@ -1,0 +1,258 @@
+Temporal Queries - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Bi-temporal queries: as_of, valid_during, recorded_during, plus natural-language phrases.
+Temporal Queries
+Time is a first-class dimension in CortexDB. Every derived record carries 
+four time fields
+ (
+valid_from
+, 
+valid_to
+, 
+recorded_from
+, 
+recorded_to
+), and every read endpoint accepts a 
+temporal
+ block that clips both axes.
+For the full model, see 
+Bi-temporal Model
+.
+On 
+/v1/recall
+ and 
+/v1/answer
+pack = client.recall(
+ scope="org:acme/dept:eng",
+ query="What database are we using for payments?",
+ view="holistic",
+ temporal={
+ "as_of": "2026-04-15T00:00:00Z", # both axes ≤ this instant
+ "natural": "last 30 days", # parsed against reference_date
+ "reference_date": "2026-05-16T00:00:00Z",
+ },
+)
+Field
+Effect
+as_of
+Clips both axes — 
+recorded_* ≤ as_of
+ AND 
+valid_from ≤ as_of < valid_to
+valid_during
+{from, to}
+ window on the world-time axis
+recorded_during
+{from, to}
+ window on the ingest-time axis
+natural
+Phrase like 
+"last week"
+, 
+"this quarter"
+, 
+"fiscal Q3"
+ (register custom phrases via 
+/v1/temporal/phrases
+)
+reference_date
+Anchor for 
+natural
+; defaults to request time
+On layer reads
+GET /v1/events
+ accepts 
+since
+ and 
+until
+ (ISO-8601), and 
+GET /v1/facts
+ accepts 
+as_of
+ + 
+include_superseded
+:
+# Events observed in March
+events = client.events(
+ scope="org:acme/dept:eng",
+ since="2026-03-01T00:00:00Z",
+ until="2026-04-01T00:00:00Z",
+ limit=200,
+)
+# Facts as the system saw them on April 15
+facts = client.facts(
+ scope="org:acme/dept:eng",
+ subject="ent_payments_service",
+ as_of="2026-04-15T00:00:00Z",
+ include_superseded=False, # only the value that was current then
+)
+The supersession chain
+GET /v1/facts/timeline?subject=…&predicate=…
+ returns every value the system has held for that 
+(subject, predicate)
+ pair, with the validity window for each:
+timeline = client.fact_timeline(
+ scope="org:acme/dept:eng",
+ subject="ent_payments_service",
+ predicate="database",
+)
+for row in timeline["timeline"]:
+ print(f" {row['value']:>12} valid {row['valid_from']} → {row['valid_to'] or 'now'}")
+ postgres valid 2024-01-01T00:00:00Z → 2026-03-15T10:00:00Z
+ cockroachdb valid 2026-03-15T10:00:00Z → now
+This is what lets you ask 
+"What database did we use for payments before the migration?"
+ — pass 
+as_of
+ set to the day before the migration and the right value comes back.
+Why two axes
+Single-axis systems can answer either "what was true at time T" or "what did the system know at time T", but not both. CortexDB tracks 
+valid_*
+ (world time) and 
+recorded_*
+ (ingest time) independently, so you can reconstruct historical 
+model state
+ — 
+what did the system believe about X on April 15, as observed from May 1?
+Custom temporal phrases
+Register tenant-specific phrases via 
+POST /v1/temporal/phrases
+:
+import requests, os
+requests.post(
+ "https://api-v1.cortexdb.ai/v1/temporal/phrases",
+ headers={"Authorization": f"Bearer {os.environ['CORTEX_TOKEN']}", "X-Cortex-Actor": os.environ["CORTEX_ACTOR"], "Content-Type": "application/json"},
+ json={
+ "name": "fiscal Q3",
+ "anchor": "2026-01-31T00:00:00Z",
+ "expression": "+P6M..+P9M", # +6mo to +9mo from anchor
+ },
+)
+Then 
+temporal: {"natural": "fiscal Q3"}
+ on recall/answer is parsed against that window.

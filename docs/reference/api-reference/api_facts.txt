@@ -1,0 +1,221 @@
+Facts - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Bi-temporal triple-shaped assertions — list + timeline.
+Facts
+Facts are triple-shaped, fully bi-temporal assertions: 
+(subject, predicate, object)
+ with 
+valid_from / valid_to / recorded_from / recorded_to
+. Newer facts about the same 
+(subject, predicate)
+supersede
+ older ones.
+GET /v1/facts
+Capability:
+scope.read.local
+ + traversal as appropriate.
+GET /v1/facts
+ ?scope=org:acme/dept:eng/user:alice
+ &view=local
+ &subject=ent_acme_corp
+ &predicate=deal_stage
+ &as_of=2026-04-15T00:00:00Z
+ &min_confidence=0.6
+ &include_superseded=false
+ &limit=50
+ &cursor=...
+Query param
+Notes
+subject
+Filter by entity/actor ID
+predicate
+Filter by predicate name
+object
+Match object value (literal or entity ID)
+as_of
+Returns facts where 
+recorded_* ≤ as_of
+ AND 
+valid_from ≤ as_of < valid_to
+min_confidence
+Default 0.0
+include_superseded
+Default 
+false
+. When 
+true
+, returns historical versions whose 
+recorded_to ≤ as_of
+ too.
+as_of
+ and 
+include_superseded
+ apply conjunctively — 
+as_of
+ clips both axes.
+Response
+{
+ "items": [
+ {
+ "fact_id": "fact_01HX...",
+ "scope": "org:acme/dept:eng",
+ "subject": { "id": "ent_acme_corp", "name": "Acme Corp" },
+ "predicate": "deal_stage",
+ "object": { "datatype": "string", "value": "signed" },
+ "confidence": 0.93,
+ "valid_from": "2026-05-13T00:00:00Z",
+ "valid_to": null,
+ "recorded_from": "2026-05-13T15:42:00Z",
+ "recorded_to": null,
+ "supports": ["evt_01HX...", "evt_01HY..."],
+ "extracted_at": "2026-05-13T15:42:09Z"
+ }
+ ],
+ "next_cursor": null,
+ "has_more": false
+}
+GET /v1/facts/timeline
+Returns the supersession chain for a 
+(subject, predicate)
+ pair — every historical value with its 
+valid_from / valid_to
+ window.
+GET /v1/facts/timeline
+ ?scope=org:acme/dept:eng
+ &subject=ent_acme_corp
+ &predicate=deal_stage
+Response
+{
+ "subject": { "id": "ent_acme_corp", "name": "Acme Corp" },
+ "predicate": "deal_stage",
+ "timeline": [
+ { "fact_id": "fact_01HV...", "value": "poc", "valid_from": "...", "valid_to": "2026-04-10T..." },
+ { "fact_id": "fact_01HW...", "value": "close", "valid_from": "2026-04-10T...", "valid_to": "2026-05-13T..." },
+ { "fact_id": "fact_01HX...", "value": "signed", "valid_from": "2026-05-13T...", "valid_to": null }
+ ]
+}

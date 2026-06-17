@@ -1,0 +1,321 @@
+The Experience Envelope - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+The structured payload for everything CortexDB ingests. How one shape covers messages, observations, tool results, documents, and triples.
+What is the Experience Envelope for AI memory?
+The Experience Envelope is a single, structured payload used to ingest and process all forms of agent experience, including messages, observations, tool results, documents, and raw triples, into lossless event-sourced memory.
+CortexDB—a long-term memory layer for AI agents built by Apache Cassandra co-creator Prashant Malik—relies on this unified shape for everything it ingests.
+Why the Experience Envelope matters
+Knowledge is what is true about the world and can be ingested as static documents, while memory is what is true about a specific agent and requires rich contextual grounding. Most vector databases and fragmented memory frameworks force developers to juggle multiple ingest formats. This approach creates brittle integrations where messages, tool outputs, and user observations are stored in completely different ways.
+Fragmented ingest pipelines lead to fragmented memory retrieval. CortexDB solves this by requiring a single Experience Envelope for all data types. Every ingestion request guarantees that context, bi-temporal timestamps, and hierarchical scopes are properly bound to the payload.
+How CortexDB thinks about ingest payloads
+CortexDB separates ingest payloads into distinct functional slots: identity, content, context, and operational directives. Identity slots define who the memory is about. Content holds the raw data. Context provides temporal and spatial grounding. Operational directives control exactly how CortexDB processes the event.
+This strict separation ensures that the underlying system can parse complex experiences uniformly. CortexDB processes the Envelope through the six atomic operations of its memory lifecycle, seamlessly routing data into the correct layer.
+How do you format the minimal envelope?
+Every payload passed to 
+/v1/experience
+ requires a basic structure:
+{
+ "scope": "org:acme/dept:eng/user:alice",
+ "modality": "conversation",
+ "content": { "kind": "message", "role": "user", "text": "Just got off a call with Priya at Acme." },
+ "context": { "observed_at": "2026-05-15T10:42:00Z" },
+ "idempotency_key": "alice-chat-001"
+}
+How do you use the three identity slots?
+You can define up to three distinct identities in the envelope. The three default neatly to each other for the common case where you are simply narrating yourself.
+Slot
+Default
+Cap needed when set explicitly
+Caller
+Implicit (from token)
+always
+Observed actor
+= caller
+scope.write.on_behalf_of
+ when ≠ caller
+Subject
+= observed_actor
+scope.write.about_other
+ when ≠ observed_actor
+This structure easily supports bots writing 
+on behalf of
+ a user (
+observed_actor
+), and writing memories 
+about
+ entities or other actors (
+subject
+).
+What are the content kinds?
+The envelope's 
+content
+ field is a discriminated union. You select the shape that matches your data:
+Kind
+Shape
+Use for
+message
+{ role, text, media[] }
+Conversational turns (user / assistant / tool / system)
+text
+{ text }
+Free-form text observations
+json
+{ data }
+Structured tool outputs, sensor readings
+blob_ref
+{ blob_id }
+Reference an already-uploaded blob
+triple
+{ triple: {subject, predicate, object} }
+Direct fact insertion
+The role enum accepts 
+user
+, 
+assistant
+, 
+tool
+, or 
+system
+.
+How do modalities trigger extraction?
+Unknown modality values are stored verbatim but do not trigger structured extraction.
+Modality
+Triggers extraction?
+Notes
+conversation
+yes
+Fact + episode extraction
+document
+yes
+Document chunking + entity extraction
+tool_result
+yes
+JSON inspection
+observation
+yes
+Generic
+feedback
+no
+Marked as supporting evidence only
+imported
+yes (with mapping)
+Used by 
+/v1/import/*
+What goes in the context block?
+The 
+observed_at
+ field is the only required field. The 
+preceded_by
+ array lets you chain experiences across asynchronous tool calls so the episode builder can recognise the sequence.
+{
+ "observed_at": "2026-05-15T10:42:00Z",
+ "source_recorded_at": "2026-05-15T10:41:58Z",
+ "location": { "city": "Bangalore" },
+ "preceded_by": ["evt_01HX..."],
+ "intent": "deal_status_update",
+ "labels": ["acme", "renewal"]
+}
+Why is the idempotency key mandatory?
+The 
+idempotency_key
+ is mandatory (≤ 64 chars). Using the same key and same body results in a no-op. Using the same key with a different body results in a 
+409 
+idempotency_conflict
+. Use a deterministic key per source-system message (e.g., 
+slack:C123:T456:1747293720
+) so retries are safe.
+How do you use operational directives?
+You can override per-call behaviour using the optional 
+directives
+ block:
+{
+ "directives": {
+ "extract": ["facts", "beliefs"],
+ "consolidate_into": "org:acme/dept:eng",
+ "confidence_floor": 0.7,
+ "ttl_for_belief_layer": "P30D",
+ "embed": "eager"
+ }
+}
+Field
+Notes
+extract
+Subset of 
+facts
+, 
+entities
+, 
+beliefs
+, 
+episodes
+, 
+understanding
+consolidate_into
+Merge derived layers into a different scope (requires 
+scope.write
+ on both)
+confidence_floor
+Drop derived records below this confidence
+ttl_for_belief_layer
+ISO 8601 duration (e.g. 
+P30D
+)
+embed
+eager
+ / 
+lazy
+ / 
+none
+What the Experience Envelope enables
+Unified ingestion:
+ Agents can push chat logs, JSON tool outputs, and raw documents through a single reliable endpoint.
+Rich contextual grounding:
+ Every piece of ingested memory is rigorously stamped with correct bi-temporal and spatial metadata before processing.
+Asynchronous extraction:
+ The structured payload allows entity extraction and summarisation to happen safely in the background without blocking the write path.
+How CortexDB compares to vector databases
+Pinecone and Neo4j only accept raw vectors or edges without any unified framework for context. These systems force developers to wrap data in custom schemas before saving it. CortexDB achieves 93.8% on LongMemEval-S (beating Mem0 at 93.4%), and our approach guarantees that every piece of memory ingested via the Envelope is automatically primed for 4-channel hybrid retrieval (BM25 + HNSW vectors + graph traversal + cross-encoder reranking). The standardized envelope ensures that Cognitive Recall always retrieves perfectly context-aligned results across all hierarchical scopes.
+FAQ
+What is the Experience Envelope?
+The Experience Envelope is a single, structured payload used by CortexDB to ingest all forms of agent experience, replacing fragmented endpoints with one standardized format.
+Why does the Experience Envelope require an idempotency key?
+Idempotency keys prevent duplicate data from corrupting an agent's memory. CortexDB requires a deterministic key for every payload so network retries remain perfectly safe.
+Can the Experience Envelope handle tool outputs?
+Yes. The Experience Envelope's 
+content
+ field accepts a 
+json
+ discriminated union specifically designed to ingest structured tool outputs and sensor readings.
+How does the Experience Envelope handle identity?
+The Envelope manages identity through three slots: the caller, the observed actor, and the subject. This design allows bots to securely write memories about other entities or act on behalf of a user.
+Does the Experience Envelope block the write path?
+No. The Experience Envelope returns immediately after the capture phase. Heavy tasks like entity extraction and memory consolidation run asynchronously without blocking the write path.
+Lifecycle
+The six atomic operations of memory.
+Scopes
+How hierarchical scopes partition memory.

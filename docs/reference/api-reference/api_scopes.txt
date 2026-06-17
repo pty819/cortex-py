@@ -1,0 +1,223 @@
+Scopes - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Hierarchical scope paths — create, get, update members, delete, list.
+Scopes
+Scopes are CortexDB's 
+single namespace primitive
+. A scope is a 
+/
+-delimited path of 
+type:id
+ segments (e.g., 
+org:acme/dept:eng/user:alice
+). Scopes replace "tenant_id" + "namespace" + "workspace" from older designs.
+Scopes can be 
+auto-provisioned
+ by writes or 
+explicitly registered
+ to set members and policies. They form a hierarchy: a read at 
+org:acme/dept:eng
+ with 
+view=descend
+ can traverse to 
+org:acme/dept:eng/user:alice
+.
+Scope paths in query parameters use the 
+path=
+ parameter (because the path itself contains 
+/
+).
+POST /v1/scopes — Create / register
+{
+ "path": "org:acme/dept:eng/user:alice",
+ "members": [
+ { "actor": "user:alice", "role": "owner" },
+ { "actor": "agent:planner_v3", "role": "writer" }
+ ],
+ "policies": {
+ "retention": { "events": "P365D", "facts": "P90D" },
+ "default_view": "holistic",
+ "diagnostics_allowed": false
+ }
+}
+Response — 201
+{
+ "path": "org:acme/dept:eng/user:alice",
+ "members": [ ... ],
+ "policies": { ... },
+ "auto_provisioned": false,
+ "created_at": "2026-05-15T10:42:00Z",
+ "inherited_policy": { "default_view": "holistic" }
+}
+GET /v1/scopes
+GET /v1/scopes?path=org:acme/dept:eng/user:alice
+Returns the same shape as create. Includes the 
+resolved
+ policy (own + inherited).
+PUT /v1/scopes/members
+Replace the member list.
+PUT /v1/scopes/members?path=org:acme/dept:eng/user:alice
+{
+ "members": [
+ { "actor": "user:alice", "role": "owner" },
+ { "actor": "user:priya@acme", "role": "reader" }
+ ]
+}
+DELETE /v1/scopes
+DELETE /v1/scopes?path=org:acme/dept:eng/user:alice&records=forget
+records
+Behaviour
+(omitted)
+Reject if scope still has records (409 
+SCOPE_HAS_RECORDS
+)
+forget
+Cascade a derived-only forget across the scope first, then delete
+keep
+Detach the scope record but leave events in place (orphaned events accessible only by ancestor traversal)
+Returns 
+204
+.
+GET /v1/scopes/list
+List scopes by prefix.
+GET /v1/scopes/list?prefix=org:acme&auto_provisioned=false&limit=50
+Response
+{
+ "items": [
+ { "path": "org:acme/dept:eng", "auto_provisioned": false },
+ { "path": "org:acme/dept:eng/user:alice","auto_provisioned": true }
+ ]
+}
+POST /v1/scopes/prune — Cleanup
+Stability: 
+experimental
+.
+{ "older_than": "P90D", "dry_run": true }
+Returns candidate auto-provisioned scopes with no recent activity. Use 
+dry_run: false
+ to actually delete.

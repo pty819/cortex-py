@@ -1,0 +1,246 @@
+Export & Import - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Export and import CortexDB data for migration, backup, and portability.
+Export & Import
+CortexDB supports full data export and import for backups, migrations, and one-time data loads from peer systems.
+Export
+Export episodes and derived layers for a scope. Returns a JSONL payload inline (smaller exports) or an async job with a download URL (larger).
+import requests, os
+r = requests.post(
+ "https://api-v1.cortexdb.ai/v1/export",
+ headers={
+ "Authorization": f"Bearer {os.environ['CORTEX_TOKEN']}",
+ "X-Cortex-Actor": os.environ["CORTEX_ACTOR"],
+ "Content-Type": "application/json",
+ },
+ json={
+ "scope": "org:acme/dept:eng",
+ "format": "jsonl",
+ "episode_type": "decision",
+ "time_range_start": 1735689600000000, # microseconds since epoch
+ "time_range_end": 1743465600000000,
+ },
+).json()
+with open("decisions-q1.jsonl", "w") as f:
+ f.write(r["data"])
+curl -X POST https://api-v1.cortexdb.ai/v1/export \
+ -H "Authorization: Bearer $CORTEX_TOKEN" \
+ -H "X-Cortex-Actor: $CORTEX_ACTOR" \
+ -H "Content-Type: application/json" \
+ -d '{
+ "scope": "org:acme/dept:eng",
+ "format": "jsonl",
+ "episode_type": "decision"
+ }' > decisions.jsonl
+See 
+POST /v1/export
+ for the full filter set.
+Import — from CortexDB exports
+The corresponding endpoint accepts the same JSONL shape:
+client.experience_bulk(
+ scope="org:acme/dept:eng",
+ items=[
+ {"modality": "conversation", "content": {"kind": "message", "role": "user", "text": "..."},
+ "context": {"observed_at": "..."}, "idempotency_key": "..."}
+ for line in open("decisions-q1.jsonl")
+ ],
+ ordering="strict_temporal",
+)
+For larger imports (≥1000 items), use 
+POST /v1/import/jsonl
+ directly — it returns an async job ID and progresses on the 
+lifecycle stream
+:
+curl -X POST https://api-v1.cortexdb.ai/v1/import/jsonl \
+ -H "Authorization: Bearer $CORTEX_TOKEN" \
+ -H "X-Cortex-Actor: $CORTEX_ACTOR" \
+ -H "Content-Type: application/json" \
+ -d "$(jq -Rs '{scope_template: "org:acme/user:{user_id}", lines: split("\n")}' decisions-q1.jsonl)"
+Import — from peer systems
+CortexDB ships native importers for Mem0, Zep, Letta, and OpenAI memory exports. Each accepts a 
+scope_template
+ with 
+{placeholders}
+ filled per row.
+# Mem0 → CortexDB
+requests.post("https://api-v1.cortexdb.ai/v1/import/mem0", headers=H, json={
+ "scope_template": "org:acme/user:{user_id}",
+ "rows": mem0_export["memories"],
+})
+# Zep → CortexDB (preserves bi-temporal valid_from / valid_to)
+requests.post("https://api-v1.cortexdb.ai/v1/import/zep", headers=H, json={
+ "scope_template": "org:acme/user:{user_id}",
+ "rows": zep_export["facts"],
+})
+# Letta → CortexDB (archival blocks land as documents)
+requests.post("https://api-v1.cortexdb.ai/v1/import/letta", headers=H, json={
+ "scope": "org:acme/user:alice",
+ "rows": letta_export["archival_memory"],
+})
+All importers return 
+202
+ with an 
+import_id
+ — track progress on 
+GET /v1/import/{id}
+ or via the lifecycle stream's 
+import_progress
+ / 
+import_complete
+ events.
+Operational Backups and PITR
+Export/import is the 
+logical portability
+ path. For disaster recovery, CortexDB also supports an operator-level backup flow:
+Backups are configured under 
+[backup]
+ in the server config.
+Cloud targets support 
+local
+, 
+s3
+, 
+gcs
+, and 
+azure
+.
+PITR replay rebuilds derived vector, graph, fulltext, content, and memory-state stores from the WAL.
+For operator details, see 
+Backups & Disaster Recovery
+.
+Migration Between Instances
+# 1. Export from source
+curl -X POST https://api-v1.source.example.com/v1/export \
+ -H "Authorization: Bearer $SRC_TOKEN" -H "X-Cortex-Actor: $SRC_ACTOR" \
+ -H "Content-Type: application/json" \
+ -d '{"scope":"org:acme/dept:eng","format":"jsonl"}' | jq -r .data > backup.jsonl
+# 2. Import to destination
+curl -X POST https://api-v1.dest.example.com/v1/import/jsonl \
+ -H "Authorization: Bearer $DST_TOKEN" -H "X-Cortex-Actor: $DST_ACTOR" \
+ -H "Content-Type: application/json" \
+ -d "$(jq -Rs '{scope_template: "org:acme/dept:eng", lines: split("\n")}' backup.jsonl)"

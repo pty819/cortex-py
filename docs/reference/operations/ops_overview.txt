@@ -1,0 +1,310 @@
+Operations Overview - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Where every CortexDB knob lives — config file, env var, or CLI flag — and how to navigate this section.
+Operations Overview
+CortexDB is a single Rust binary with roughly 
+100 environment variables
+, 
+10 CLI flags
+, and a 
+TOML configuration file
+ with 14 sections and more than 200 fields. That sounds like a lot. In practice, 
+most operators touch fewer than ten knobs
+ — the rest exist for cluster tuning, regulated-industry deployments, or A/B experiments.
+This section is structured so you can stop reading at the level of detail you need:
+If you want to…
+Read
+Copy-paste a known-good config for your domain
+Profiles & Presets
+Understand the rules (file vs env vs CLI, what overrides what)
+Configuration Foundations
+Tune embeddings (model, dims, batch, cost)
+Embeddings
+Pick or swap an answer LLM
+LLM & Answer Generation
+Make recall faster, cheaper, or more accurate
+Recall Tuning
+Set up multi-node, blob backends, or persistence
+Storage & Cluster
+Lock it down for SOC2/HIPAA/GDPR
+Security & Compliance
+Reproduce the 93.8% LongMemEval-S number
+Benchmarking
+Push 
+past
+ 93.8% — every opt-in feature on
+Max-Recall profile
+The three places config lives
+CortexDB reads configuration from three sources, applied in this order (each layer overrides the previous):
+ ┌─────────────────────────────┐
+ Lowest │ 1. Compiled defaults │ Hardcoded in cortex-config
+ precedence │ (sane production values) │ and source consts
+ ├─────────────────────────────┤
+ │ 2. <data_dir>/cortex.toml │ Persisted, version-controllable
+ │ (deployment config) │ source of truth
+ ├─────────────────────────────┤
+ Highest │ 3. Environment variables │ Per-process overrides for
+ precedence │ (runtime/per-run tuning) │ benchmarks, A/B, hotfixes
+ ├─────────────────────────────┤
+ │ 4. CLI flags │ Cluster topology only —
+ │ (--node-id, --rpc-addr…) │ no overlap with the above
+ └─────────────────────────────┘
+The split is intentional.
+ Things that should be the same across every restart go in 
+cortex.toml
+ (HNSW shape, replication factor, retention policy, audit). Things that should change between runs go in env vars (model choice, recall weights, scheduler on/off). Topology is a CLI concern because it changes the binary's 
+role
+, not its behavior.
+What's actually tunable
+A rough taxonomy of the surface, by what you'd reach for and when:
+Always touch
+OPENAI_API_KEY
+ and/or 
+ANTHROPIC_API_KEY
+ — without these, you're on mock embeddings and you'll get nonsense recall.
+cortex.toml
+'s 
+[storage] data_path
+ — defaults to 
+/data/cortex
+, which is wrong unless that's a real volume you mounted.
+Touch on day one
+Embedding model.
+CORTEX_EMBEDDING_MODEL
+ + 
+CORTEX_EMBEDDING_DIMS
+. The default (
+text-embedding-3-small
+, 1536) is fine for most workloads; pick 
+text-embedding-3-large
+ (3072) if you've got the budget for ~3× the API cost and want every percentage point of recall accuracy.
+Answer model.
+CORTEX_ANSWER_PROVIDER
+ + 
+CORTEX_ANSWER_MODEL
+. Defaults to 
+anthropic
+ / 
+claude-opus-4-6
+ — the model we benchmarked at 93.8% on LongMemEval-S. Swap to 
+openai
+ / 
+gpt-4o
+ if your stack is OpenAI-native.
+Scheduler.
+[scheduler]
+ in 
+cortex.toml
+, or 
+CORTEX_SCHEDULER_DISABLE=1
+. Background compaction & methylation are on by default and right for production; disable for benchmarks (they pollute the vector index over long runs — see 
+Benchmarking
+).
+Touch only if you have a reason
+Recall weights and pool sizes.
+CORTEX_GRAPH_RETRIEVAL_TOP_K
+, 
+CORTEX_SALIENCE_WEIGHT
+, 
+CORTEX_MULTIHOP_*
+. Most queries are well served by defaults; tune only if you're seeing systematic recall failures of a specific shape.
+HNSW shape.
+[engine] hnsw_m / hnsw_ef_construction / hnsw_ef_search
+. Larger 
+M
+ = better recall at higher memory and build cost. Larger 
+ef_search
+ = better recall at higher query latency. Defaults (
+M=16
+, 
+ef_construction=200
+, 
+ef_search=100
+) match the published numbers.
+Cluster topology.
+ All the 
+--node-id
+, 
+--rpc-addr
+, 
+--gossip-addr
+, 
+--seed-nodes
+ flags. Skip until you have a real reason to leave single-node — single-node is solid up to ~10M events on commodity hardware.
+Don't touch unless you're debugging the recall pipeline
+The A/B feature flags in 
+cortex-coordinator
+: 
+CORTEX_MS_EVIDENCE_PACK_DISABLE
+, 
+CORTEX_COMPOSITIONAL_ENABLE
+, 
+CORTEX_MS_EXECUTOR_DISABLE
+, etc. These exist for us to validate routing decisions during benchmark runs. Production deployments should leave them at their compiled defaults.
+A note on what's hard-coded
+About 25 retrieval and ranking constants live in 
+cortex-coordinator/src/recall.rs
+ as 
+const
+ declarations, not env vars. Examples:
+RETRIEVAL_TOP_K = 40
+ (single-session) / 
+RETRIEVAL_TOP_K_MS = 160
+ (multi-session)
+RERANK_POOL = 25
+ / 
+RERANK_POOL_MS = 40
+RRF_K = 60.0
+ (the reciprocal-rank-fusion smoothing constant)
+ENTITY_VECTOR_SEED_MIN_SIMILARITY = 0.40
+These were tuned against LongMemEval-S and LoCoMo. We expose env-var overrides for the handful that move the needle on real workloads (
+CORTEX_GRAPH_RETRIEVAL_TOP_K
+, 
+CORTEX_MULTIHOP_QUERY_COUNT
+, 
+CORTEX_MULTIHOP_MAX_QUERY_FANOUT
+). Everything else is intentionally a constant — if you find a workload where one of them matters, 
+file an issue
+ and we'll consider promoting it.
+How this section is organized
+Each page that follows takes one subsystem and walks every knob in detail:
+Knob name
+ — exact env-var or TOML field
+Default
+ — what you get if you set nothing
+Type & range
+ — what's accepted, what gets rejected at validation
+What it controls
+ — one-line semantic
+When to change it
+ — the actual operator-facing decision
+Example
+ — a copy-paste snippet you can adapt
+If you want a 30-second answer for your domain, jump to 
+Profiles & Presets
+ — every profile is a complete, copy-paste-ready set of env vars + cortex.toml fragment that we either benchmarked or recommend on principled grounds (marked clearly which is which).

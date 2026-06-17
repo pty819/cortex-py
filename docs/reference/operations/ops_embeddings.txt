@@ -1,0 +1,352 @@
+Embeddings - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Every embedding-related knob: provider, model, dimensions, batch size, retries, and the constraints that link them to the HNSW index.
+Embeddings
+CortexDB calls an embedding service on every event ingest (one vector per chunk) and on every recall query (one vector for the query, plus N for HyDE-expanded queries). Embeddings are the single largest line item in your inference bill for most workloads.
+The core constraint
+The embedding service's output dimension must match the engine's vector index dimension.
+ They are configured separately and CortexDB does not check them against each other at startup — a mismatch produces silent recall failures (everything returns 0 results).
+Setting
+Where
+Default
+Embedding output dim
+CORTEX_EMBEDDING_DIMS
+ env var
+1536
+Index storage dim
+cortex.toml
+ → 
+[engine] vector_dimensions
+3072
+The defaults don't match each other.
+ This is a known pitfall: the env-var default targets 
+text-embedding-3-small
+ (1536), and the TOML default targets 
+text-embedding-3-large
+ (3072). Pick one model and set both consistently. The 
+vector_dimensions
+ field accepts only 
+{256, 384, 512, 768, 1024, 1536, 3072}
+ — anything else fails schema validation at startup.
+A correct minimal config for 
+text-embedding-3-small
+:
+# cortex.toml
+[engine]
+vector_dimensions = 1536
+export CORTEX_EMBEDDING_MODEL=text-embedding-3-small
+export CORTEX_EMBEDDING_DIMS=1536
+Provider selection
+export CORTEX_EMBEDDING_PROVIDER=<empty> | cohere | ollama
+Value
+Behavior
+Required env
+(empty / unset)
+HTTP service against 
+CORTEX_EMBEDDING_URL
+. 
+Default.
+OPENAI_API_KEY
+ or 
+LLM_API_KEY
+cohere
+Cohere's embed API.
+COHERE_API_KEY
+ollama
+(also: any URL containing 
+:11434
+)
+Local Ollama daemon. No auth required.
+CORTEX_EMBEDDING_URL=http://localhost:11434
+The "any URL containing 
+:11434
+" detection is a convenience — if you set 
+CORTEX_EMBEDDING_URL=http://localhost:11434
+ without explicitly setting the provider, you get Ollama mode automatically.
+When the API key is missing
+If no 
+OPENAI_API_KEY
+ / 
+LLM_API_KEY
+ / 
+COHERE_API_KEY
+ is set and Ollama isn't detected, the binary falls back to 
+MockEmbeddingService
+ (random 384-d vectors) and logs:
+warn No OPENAI_API_KEY or LLM_API_KEY set -- falling back to mock embeddings.
+This is a development convenience and produces meaningless recall.
+ Always check startup logs to confirm you're not on mock.
+The full env-var surface
+Env var
+Default
+What it controls
+CORTEX_EMBEDDING_URL
+https://api.openai.com/v1
+Base URL of the embedding HTTP API.
+CORTEX_EMBEDDING_MODEL
+text-embedding-3-small
+Model name passed to the provider.
+CORTEX_EMBEDDING_DIMS
+1536
+Output dimension. Must match 
+engine.vector_dimensions
+.
+CORTEX_EMBEDDING_PROVIDER
+(empty)
+cohere
+, 
+ollama
+, or empty for OpenAI-compatible HTTP.
+CORTEX_EMBEDDING_MAX_BATCH_ITEMS
+2048
+Max items per provider call before client splits.
+CORTEX_EMBEDDING_RETRY_ATTEMPTS
+1
+How many times to retry on transient error before failing the request.
+CORTEX_EMBEDDING_RETRY_BASE_DELAY_MS
+250
+Initial backoff between retries (exponential).
+OPENAI_API_KEY
+(none)
+Primary key for OpenAI / HTTP mode.
+LLM_API_KEY
+(none)
+Generic fallback if 
+OPENAI_API_KEY
+ not set.
+COHERE_API_KEY
+(none)
+Required if 
+CORTEX_EMBEDDING_PROVIDER=cohere
+.
+Choosing a model
+Model
+Provider
+Dims
+Cost / 1M tok
+When to pick it
+text-embedding-3-small
+OpenAI
+1536
+$0.020
+Default.
+ Used in our published 93.8% number.
+text-embedding-3-large
+OpenAI
+3072
+$0.130
+~+0.4pp on LongMemEval-S, ~3× cost.
+embed-multilingual-v3.0
+Cohere
+1024
+$0.100
+Strong on non-English content.
+nomic-embed-text
+Ollama (local)
+768
+$0
+Local, free, ~5pp worse than OpenAI small.
+mxbai-embed-large
+Ollama (local)
+1024
+$0
+Best local option; ~3pp worse than OpenAI small.
+bge-large-en-v1.5
+Ollama (local)
+1024
+$0
+Strong English-only local; similar to mxbai.
+The published LongMemEval-S configuration uses 
+text-embedding-3-small
+ not because it's the best, but because the +0.4pp from 
+large
+ didn't justify the 3× cost — we wanted the published config to be the one we'd recommend to most users. If you have an unusual budget, swap to large.
+Batch and retry tuning
+The embedding service collects pending requests and packs them into provider calls of up to 
+CORTEX_EMBEDDING_MAX_BATCH_ITEMS
+ items. Larger batches reduce per-request overhead and improve throughput, but increase the latency for the 
+first
+ request in a batch.
+Workload
+MAX_BATCH_ITEMS
+RETRY_ATTEMPTS
+Why
+Realtime / voice
+256
+1
+Small batches don't gather large enough to be worth waiting for; fail fast
+Default / mixed
+2048
+1
+Compiled default, good for most
+Batch / ingest
+4096
+3
+Pack OpenAI calls, tolerate 429s with backoff
+Cohere
+96
+2
+Cohere's per-call cap is lower than OpenAI's
+OpenAI's 
+text-embedding-3-*
+ models accept up to 2048 inputs per call. Setting 
+CORTEX_EMBEDDING_MAX_BATCH_ITEMS
+ higher than that doesn't error — the client splits transparently — but you stop getting per-batch overhead amortization.
+Local-first with Ollama
+For development without an API key:
+# Install Ollama and pull the model
+ollama pull nomic-embed-text
+# Point CortexDB at it
+export CORTEX_EMBEDDING_URL=http://localhost:11434
+export CORTEX_EMBEDDING_MODEL=nomic-embed-text
+export CORTEX_EMBEDDING_DIMS=768
+# cortex.toml — match the dim
+[engine]
+vector_dimensions = 768
+Ollama runs on the same machine as CortexDB. Expect ~30 ms / embedding on a modern CPU, much faster on a GPU. Throughput is the limit, not latency.
+Caching
+All HTTP embedding services are wrapped in 
+LruEmbeddingCache
+, an in-process LRU keyed by 
+(model, text_hash)
+. The cache survives the process lifetime; it's lost on restart.
+The cache size isn't currently env-configurable — it sits at the compiled default (~10 K entries). For workloads that re-embed the same text repeatedly (notably reruns of the same eval set), the cache is highly effective; for cold ingest workloads it's near-useless.
+Diagnostics
+On startup, the binary logs which embedding service it picked:
+info Using HTTP embedding service model=text-embedding-3-small dims=1536
+info Using Ollama local embedding service model=nomic-embed-text dims=768 url=http://localhost:11434
+info Using Cohere embedding service model=embed-multilingual-v3.0 dims=1024
+warn No OPENAI_API_KEY or LLM_API_KEY set -- falling back to mock embeddings.
+Always grep for "embedding service" in your startup logs after changing config. Silent recall failures are usually a missing API key or a dim mismatch.
+Next steps
+LLM & Answer Generation
+ — the entity-extraction and answer-generation LLMs
+Recall Tuning
+ — how embeddings feed into the recall pipeline
+Storage & Cluster
+ — the HNSW index that consumes these vectors

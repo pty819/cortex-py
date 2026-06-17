@@ -1,0 +1,248 @@
+Erasures (GDPR) - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Reference-counted true erasure of events. Preview → Execute → Status → Cancel.
+Erasures
+The only path to 
+true event deletion
+. Reference-counted: events with cross-scope references are redacted (payload blanked, ID preserved); events without references are deleted from the WAL. The full surface is preview + manifest + execute + status + cancel — long-running jobs deserve a proper lifecycle.
+For non-destructive forget across derived layers, use 
+POST /v1/forget
+.
+Stability: 
+experimental
+ until the refcount algorithm is hardened and the cross-workspace propagation rules complete legal review. Returns 
+X-Cortex-Stability: experimental
+.
+POST /v1/erasures/preview — Dry run
+Capability:
+forget.gdpr
+ (preview is gated by the same cap as execute — callers can't enumerate without authorization).
+{
+ "scope": "org:acme/user:alice",
+ "audit_note": "DSR #1234 — preview"
+}
+Response
+{
+ "preview_id": "ervw_01HX...",
+ "scope": "org:acme/user:alice",
+ "estimated_affected": {
+ "events": 12480, "episodes": 318, "facts": 4120, "beliefs": 318, "understanding": 12
+ },
+ "refcount_breakdown": {
+ "events_to_delete": 9420,
+ "events_to_redact": 3060,
+ "events_under_legal_hold": 0
+ },
+ "cross_scope_propagation": {
+ "affected_workspaces": [
+ { "scope": "ws:acme-q3-launch", "events_referenced": 412, "co_owners": ["user:priya@acme"] }
+ ],
+ "requires_capability": "forget.gdpr.cross_workspace"
+ },
+ "legal_holds": [],
+ "estimated_duration_ms": 240000,
+ "manifest_url": "/v1/erasures/preview/ervw_01HX.../manifest"
+}
+GET /v1/erasures/preview/
+/manifest — Full plan
+Line-by-line: every event ID to delete vs. redact, every cross-scope reference, every belief to demote. For legal review and customer approval. Manifests expire after 
+24 h
+.
+POST /v1/erasures — Execute
+Capability:
+forget.gdpr
+. Cross-workspace propagation additionally requires 
+forget.gdpr.cross_workspace
+.
+{
+ "scope": "org:acme/user:alice",
+ "from_preview_id": "ervw_01HX...",
+ "audit_note": "DSR #1234 — Alice exercised right to erasure",
+ "idempotency_key": "erasure-dsr-1234"
+}
+If 
+from_preview_id
+ is set and the manifest is no longer current (new events captured in scope since the preview), the request 
+409
+s and a fresh preview is required. If 
+from_preview_id
+ is omitted, the server runs a preview inline before executing.
+Response — always 202
+{
+ "erasure_id": "erasure_01HX...",
+ "status": "running",
+ "manifest_url": "/v1/erasures/erasure_01HX.../manifest",
+ "lifecycle_stream": "/v1/lifecycle/stream?erasure_id=erasure_01HX..."
+}
+GET /v1/erasures/
+ — Status
+{
+ "erasure_id": "erasure_01HX...",
+ "status": "running",
+ "phase": "delete",
+ "fraction_complete": 0.78,
+ "progress": {
+ "deleted_events": 9420,
+ "redacted_events": 3060,
+ "demoted_beliefs": 18,
+ "elapsed_ms": 180000
+ },
+ "audit_id": null
+}
+audit_id
+ populates when 
+status: "completed"
+.
+POST /v1/erasures/
+/cancel — Best-effort cancel
+Stops at the next phase boundary. Already-deleted events cannot be restored (their WAL slots are gone). Response indicates what completed before cancellation took effect.
+{
+ "erasure_id": "erasure_01HX...",
+ "cancellation_accepted": true,
+ "deleted_events_before_cancel": 4280,
+ "audit_id": "audit_01HX..."
+}
+Lifecycle events emitted
+event: erasure_progress
+data: { "erasure_id": "...", "phase": "enumerate", "fraction_complete": 0.12 }
+event: erasure_progress
+data: { "erasure_id": "...", "phase": "refcount", "fraction_complete": 0.45 }
+event: erasure_progress
+data: { "erasure_id": "...", "phase": "delete", "fraction_complete": 0.78,
+ "deleted_events": 9420, "redacted_events": 3060 }
+event: erasure_complete
+data: { "erasure_id": "...", "summary": {...}, "audit_id": "audit_01HX..." }
+Phases in order: 
+enumerate
+ → 
+refcount
+ → 
+delete
+ → 
+cleanup
+.

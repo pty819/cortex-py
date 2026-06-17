@@ -1,0 +1,181 @@
+Episodes - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Bounded spans of related events — list, get, build.
+Episodes
+Episodes are bounded, sealed spans of causally related events with a 
+started_at
+ / 
+ended_at
+ boundary. Built async by the consolidator; you can also trigger a build.
+GET /v1/episodes
+Capability:
+scope.read.local
+ + traversal as appropriate.
+GET /v1/episodes
+ ?scope=org:acme/dept:eng
+ &view=local
+ &actor=user:alice
+ &overlapping=2026-04-01..2026-05-01
+ &with_causal_chain=true
+ &limit=50
+ &cursor=...
+Response
+{
+ "items": [
+ {
+ "episode_id": "ep_01HX...",
+ "scope": "org:acme/dept:eng",
+ "title": "Acme Q3 renewal POC",
+ "started_at": "2026-04-02T09:00:00Z",
+ "ended_at": "2026-04-29T17:00:00Z",
+ "actors": ["user:alice", "user:priya@acme"],
+ "event_ids": ["evt_01HX...", "evt_01HY..."],
+ "causal_chain": [
+ { "from": "evt_01HX...", "to": "evt_01HY...", "relation": "follows" }
+ ],
+ "valid_from": "2026-04-02T09:00:00Z",
+ "valid_to": "2026-04-29T17:00:00Z",
+ "recorded_from": "2026-04-02T09:00:12Z",
+ "recorded_to": null
+ }
+ ],
+ "next_cursor": null,
+ "has_more": false
+}
+GET /v1/episodes/
+Returns the full episode record (single item from the list response).
+POST /v1/episodes/build
+Capability:
+scope.write
+Force episode synthesis for a scope (normally runs async via the consolidator).
+{ "scope": "org:acme/dept:eng/user:alice" }
+Response
+{
+ "built": 12,
+ "items": [ /* Episode records */ ]
+}

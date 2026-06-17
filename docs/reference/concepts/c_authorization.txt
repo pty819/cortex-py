@@ -1,0 +1,308 @@
+Authorization - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+PASETO tokens, the four-tier capability stack, and how CortexDB evaluates authorization for AI agents.
+What is the four-tier capability stack for AI memory authorization?
+The four-tier capability stack is an authorization model that evaluates API requests in sequence across deployment, tenant, scope, and actor policies to enforce strict access boundaries.
+CortexDB—a long-term memory layer for AI agents built by Apache Cassandra co-creator Prashant Malik—relies on this capability stack to authorize who can read or write to an agent's lossless event-sourced memory. PASETO v4 public tokens are used to securely identify callers throughout this process.
+Why authorisation for AI memory matters
+Knowledge is what is true about the world and can be shared openly, while memory is what is true about a specific agent and requires strict access control. Most vector databases treat authorisation as an afterthought, relying on flat namespaces or application-level filtering. This approach fails when agents need to access memory across organisational boundaries or when multiple agents share a host environment.
+A weak authorisation model allows one agent to overwrite another agent's memory or retrieve confidential records. CortexDB eliminates these risks by enforcing authorisation at the bi-temporal storage layer. Every request must present a valid PASETO v4 public token and an X-Cortex-Actor header. CortexDB guarantees that an agent only accesses the memory it is explicitly permitted to see.
+How CortexDB thinks about authorisation
+Decisions cascade from outer to inner tiers. An 
+allow
+ at an inner tier can override an outer 
+allow
+ (be more specific), but an 
+outer 
+deny
+ is final
+.
+1. Deployment policy ← preset-defined floor (cannot be overridden by tenant/scope)
+2. Tenant policy ← per-tenant defaults
+3. Scope policy ← per-scope ACLs and members
+4. Actor policy ← per-actor overrides
+What are the built-in deployment presets?
+CortexDB provides four built-in deployment presets that establish the foundational policy floor:
+Preset
+Notes
+on_prem_enterprise
+Most permissive. Experimentals enabled. Cross-workspace GDPR erasure allowed by default.
+cloud_managed
+Default. Experimentals gated. Cross-workspace GDPR denied by default.
+cloud_strict
+Strictest. Most diagnostics denied.
+dev_local
+Unsigned tokens allowed (
+actor.require_signed=false
+). For local development only.
+How do you authenticate an agent?
+Every request must carry:
+Authorization: Bearer <PASETO v4 public token>
+X-Cortex-Actor: user:alice
+Tokens are signed by an issuer registered in the deployment's 
+IssuerRegistry
+ and validated by the server. There are three ways to 
+get
+ one.
+Pick your auth path
+You want to…
+Use this
+Get a token by
+Try the API in 60 seconds
+ — prototype, demo, AI-agent self-install
+Anonymous sign-up
+POST /v1/auth/signup
+ with 
+{}
+ → token + actor + scope. No email. 7-day TTL on the free tier.
+Run a service account
+ (CI, connector, internal tool)
+Server-side mint
+Have a token with 
+auth.mint
+, then 
+POST /v1/auth/tokens
+ with subject/ttl/scopes. Returns a fresh PASETO.
+Deploy to production with permanent identities
+Your IdP issues PASETO
+Register your IdP's signing key with CortexDB (
+IssuerRegistry
+). Your IdP mints tokens for your users; CortexDB verifies them.
+Use the dashboard or MCP server
+cx_live_…
+ API key from the dashboard
+Create an account at cortexdb.ai → Settings → API Keys. 
+This is a separate credential format from PASETO
+, used by the dashboard's BFF and the MCP server.
+Three things to keep clear:
+PASETO tokens
+ are bearer tokens for the v1 HTTP API. They go in 
+Authorization: Bearer …
+.
+cx_live_…
+ API keys
+ are dashboard-issued credentials used by surfaces that don't speak the PASETO protocol directly (the customer dashboard at /dashboard, the MCP server, the Turso-backed billing flow). The BFF exchanges these for PASETO tokens server-side.
+There is no 
+/v1/auth/login
+. The three flows above are the only ways to get a working token.
+What goes in the token claims?
+{
+ "iss": "https://idp.acme.com/realms/main",
+ "sub": "user:alice",
+ "aud": "cortexdb:tenant:acme",
+ "exp": 1763212929,
+ "iat": 1763209329,
+ "jti": "j_01HX...",
+ "deployment": "cloud_managed",
+ "caps": ["scope.read.*", "scope.write"],
+ "scopes": ["org:acme/dept:eng/user:alice", "org:acme/dept:eng"]
+}
+X-Cortex-Actor
+ must match 
+sub
+. The token can only 
+narrow
+ what policy already allows — it cannot grant a capability the deployment denies.
+How does CortexDB format a denial?
+A 403 response always cites tier + capability + reason:
+{
+ "error_code": "policy_denied",
+ "message": "forget.gdpr.cross_workspace denied",
+ "details": {
+ "capability": "forget.gdpr.cross_workspace",
+ "decided_by_tier": "deployment",
+ "reason": "preset cloud_managed denies"
+ },
+ "retriable": false
+}
+Use 
+GET /v1/policy/effective?actor=<>&scope=<>
+ to introspect the full allow/deny matrix for an actor at a scope.
+What capabilities can you grant?
+The full capability catalog (stable, beta, and experimental) is available in the backend reference. Below is an excerpt of common capabilities.
+Capability
+What it gates
+scope.read.local
+Read records at exactly the named scope
+scope.read.holistic
+Traverse up through ancestor scopes
+scope.read.descend
+Traverse down into descendant scopes
+scope.write
+Write an experience to the scope
+scope.write.elevated
+Write above the actor's natural scope
+scope.write.on_behalf_of
+Set 
+observed_actor
+ ≠ caller
+scope.write.about_other
+Set 
+subject
+ ≠ 
+observed_actor
+forget.cascade.derived_only
+Selective forget across derived layers
+forget.cascade.redact_events
+Blank event payloads, keep IDs
+forget.gdpr
+True event deletion via 
+/v1/erasures
+forget.gdpr.cross_workspace
+Propagate erasure into co-owned workspaces
+llm.invoke
+Call 
+/v1/answer
+ (counts against tenant LLM quota)
+diagnostics.read
+Request 
+diagnostics ≠ "none"
+ on recall/answer
+understanding.synthesize
+Trigger 
+/v1/understanding/synthesize
+How CortexDB compares to vector databases
+Pinecone and other vector indices typically offer API keys with coarse-grained access control. These systems force developers to implement their own multi-tenancy logic and authorisation checks before executing a query. CortexDB builds authorisation directly into the storage engine.
+CortexDB achieves 93.8% on LongMemEval-S (beating Mem0 at 93.4%), and our approach prioritises security and strict multi-tenancy for production environments. The four-tier capability stack ensures that policy evaluation happens atomically with Cognitive Recall, safely filtering results across our 4-channel hybrid retrieval (BM25 + HNSW vectors + graph traversal + cross-encoder reranking).
+FAQ
+How do agents authenticate with CortexDB?
+Every request to CortexDB requires a PASETO v4 public token in the Authorization header and an X-Cortex-Actor header. CortexDB verifies the token signature against the registered IssuerRegistry.
+What is the four-tier capability stack?
+The four-tier capability stack is the authorisation model CortexDB uses to evaluate requests. Decisions cascade through deployment policy, tenant policy, scope policy, and actor policy.
+Can an inner policy override an outer policy in CortexDB?
+An allow at an inner tier can override an outer allow by being more specific. However, an outer deny is always final and cannot be bypassed by an inner tier.
+How does CortexDB handle unauthorized requests?
+CortexDB returns a transparent error response detailing the exact capability that was missing and the specific policy tier that made the denial decision. CortexDB does not return opaque 403 errors.
+What are the paths to obtain a PASETO token in CortexDB?
+CortexDB offers three paths to obtain tokens: anonymous sign-up for rapid prototyping, server-side minting for service accounts, and IdP integration for production environments.
+Does CortexDB use flat tenant identifiers for authorisation?
+CortexDB relies on hierarchical scopes rather than flat tenant identifiers. This structure allows authorisation policies to inherit naturally down the hierarchy from organisations to departments to individual users.
+Scopes
+How hierarchical scopes partition memory.
+Lifecycle
+The six atomic operations of memory.

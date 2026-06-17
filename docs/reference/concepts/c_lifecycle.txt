@@ -1,0 +1,275 @@
+Lifecycle & Async Writes - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+The six atomic operations of memory and how to observe them via the SSE lifecycle stream.
+What is the memory lifecycle in AI agents?
+The memory lifecycle in AI agents is a sequence of six atomic operations (Capture, Index, Update, Consolidate, Forget, Compress) used to transform an agent's lossless event-sourced memory into structured facts and beliefs.
+CortexDB—a long-term memory layer for AI agents built by Apache Cassandra co-creator Prashant Malik—utilizes this lifecycle to manage agent memory. Its architecture ensures writes remain asynchronous by default, returning immediately while heavier extraction tasks run safely in the background.
+Why the memory lifecycle matters
+Knowledge is what is true about the world and updates slowly, while memory is what is true about a specific agent and streams in continuously. Standard memory systems process extraction directly on the write path. Blocking architectures stall the agent while the database waits for an LLM to generate summaries or embed text. Agents freeze mid-conversation simply because they are blocked by database ingestion.
+CortexDB rejects this blocking architecture. The memory lifecycle completely decouples ingestion from extraction. By embracing an async-by-default model, CortexDB ensures agents remain extremely responsive. The system leverages Server-Sent Events (SSE) to notify applications as data moves through the pipeline.
+How CortexDB thinks about the memory lifecycle
+CortexDB treats the memory lifecycle as a conveyor belt flowing out of an immutable log. The initial write operation simply appends an event to the log and returns within 5 milliseconds. The heavier work of indexing vectors, extracting entities, and consolidating beliefs occurs strictly asynchronously.
+What are the six atomic operations?
+The six operations are 
+not separate endpoints
+ — they are observable lifecycle events that fire as the async view builder works. Note: 
+Retrieve
+ is 
+not
+ in this list, as recall is a request/response operation, not a lifecycle event.
+Operation
+Fires when
+Visible via
+Capture
+WAL append succeeds
+event: captured
+ on SSE; 
+wait=captured
+ returns
+Index
+Event indexed in BM25 + HNSW
+event: indexed
+; 
+wait=indexed
+ returns
+Update
+Fact ADD / UPDATE / NOOP decision
+event: extracted
+ and 
+event: consolidated
+Consolidate
+Beliefs revised; Understanding nodes touched
+event: consolidated
+; 
+wait=consolidated
+ returns
+Forget
+Records deleted
+event: forgotten
+Compress
+Episodes sealed; Understanding versions bumped
+event: compressed
+How do you opt into synchronous writes?
+Pass 
+?wait=
+ to 
+POST /v1/experience
+ when you strictly need read-after-write within the same call:
+Value
+Returns when
+Typical latency
+(omitted)
+WAL append
+~5 ms (202)
+captured
+WAL fsync
+~10 ms (200)
+indexed
+BM25 + HNSW insert
+~100–500 ms (200)
+consolidated
+Beliefs/Understanding touched
+~500–3000 ms (200)
+How do you subscribe to the lifecycle stream?
+The recommended pattern for UIs or agents is 
+fire-and-forget writes + an SSE subscription
+ on the lifecycle stream:
+GET /v1/lifecycle/stream?scope=org:acme/dept:eng&events=indexed,consolidated
+Accept: text/event-stream
+Authorization: Bearer ...
+X-Cortex-Actor: user:alice
+event: indexed
+data: { "event_id": "evt_01HX...", "lifecycle_id": "lce_01HX..." }
+event: consolidated
+data: { "event_id": "evt_01HX...", "lifecycle_id": "lce_01HY..." }
+Use the 
+Last-Event-ID
+ header (or 
+?since_lifecycle_id=<lce>
+) to resume after a disconnect. The server automatically replays missed events.
+How do async jobs work?
+Lifecycle events cover async 
+jobs
+ too, with their own progress shape:
+Job
+Events
+Status endpoint
+Bulk write
+captured
+ per item, plus aggregate 
+import_progress
+/
+import_complete
+—
+Import
+import_progress
+, 
+import_complete
+, 
+import_error
+GET /v1/import/
+Erasure
+erasure_progress
+, 
+erasure_complete
+GET /v1/erasures/
+Synthesize
+progress events
+GET /v1/understanding/synthesize/
+Export
+export_progress
+, 
+export_complete
+GET /v1/export/
+A 
+lagging
+ event is emitted when the consolidator queue depth exceeds a tenant-configurable threshold. You should surface this in dashboards to detect index drift.
+What the memory lifecycle enables
+Zero-latency ingestion:
+ Agents never wait for slow LLM extraction to complete during active conversations.
+Granular observability:
+ Applications can easily stream real-time updates to UI components as new facts are consolidated.
+Robust background processing:
+ CortexDB achieves 93.8% on LongMemEval-S (beating Mem0 at 93.4%), and our approach guarantees that heavy operations like 4-channel hybrid retrieval (BM25 + HNSW vectors + graph traversal + cross-encoder reranking) indexing happen without disrupting live agents.
+How CortexDB compares on memory processing
+Mem0 and Zep rely heavily on synchronous LLM calls placed directly on the write path. Memory layers built this way inherently struggle with scale and latency spikes. CortexDB avoids this entirely. Our architecture separates the durable write from the asynchronous derivation pipeline. Cognitive Recall seamlessly bridges this gap by retrieving the latest bi-temporal facts across hierarchical scopes, even if consolidation is still processing in the background.
+FAQ
+What are the six atomic operations of memory?
+The six atomic operations are Capture, Index, Update, Consolidate, Forget, and Compress. CortexDB uses these lifecycle operations to securely parse and track data flowing through the ingestion pipeline.
+Does CortexDB include Retrieve in the lifecycle?
+No. Retrieve is explicitly not part of the async ingestion lifecycle. Retrieve is a synchronous request-and-response operation used to fetch memory, rather than a background processing stage.
+How fast is a default memory write in CortexDB?
+A default write in CortexDB is completely asynchronous. The system appends the data to the Write-Ahead Log (WAL) and returns a 202 Accepted response in approximately 5 milliseconds.
+Can agents force synchronous writes?
+Yes. Agents can optionally append wait parameters to their API requests. This forces the database to block the request until the memory is fully indexed or consolidated.
+Why is the memory lifecycle async by default?
+Synchronous extraction forces the agent to wait while an LLM processes text. An async-by-default architecture ensures the agent remains highly responsive during active conversations while the database handles extraction entirely in the background.
+The Experience Envelope
+The unified payload that enters the lifecycle.
+The Five Memory Layers
+Where data lands after consolidation.

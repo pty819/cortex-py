@@ -1,0 +1,290 @@
+Bi-temporal Model - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Every derived record carries four time fields. Why two axes of time are non-negotiable for AI memory.
+What is a bi-temporal model for AI memory?
+A bi-temporal model in AI memory ensures every derived record tracks two distinct axes of time: when an event happened in the real world and when the system learned about it, allowing agents to accurately reconstruct historical states without destructive overwrites.
+CortexDB—a long-term memory layer for AI agents built by Apache Cassandra co-creator Prashant Malik—maintains four distinct time fields per record to guarantee this lossless event-sourced memory.
+Why a bi-temporal model matters
+Knowledge is what is true about the world and can be shared openly without timestamps, while memory is what is true about a specific agent and changes constantly. Most vector databases and single-axis memory systems overwrite old data when a new fact arrives. Single-axis updates destroy the agent's historical context, making it impossible to answer questions like, "What did you believe about this user last month?"
+Single-axis systems answer either historical truth or historical knowledge, but not both. Agents cannot safely supersede old facts while preserving the evidentiary chain without both axes of time. CortexDB eliminates this problem by cleanly separating the two dimensions of time.
+How CortexDB thinks about bi-temporal memory
+CortexDB separates time into two axes: validity time and recorded time. Validity time dictates when a claim is true in the real world, while recorded time dictates when CortexDB learned the claim. This separation ensures CortexDB can safely reconstruct historical model state. New evidence simply supersedes the old record, terminating its validity without deleting it from the underlying immutable log.
+What time fields do records carry?
+Every derived record except Events carries four time fields:
+Field
+Meaning
+valid_from
+First moment in the 
+world
+ when the claim is true
+valid_to
+First moment when the claim ceases to be true (exclusive). 
+null
+ = open-ended
+recorded_from
+First moment CortexDB 
+learned
+ the claim
+recorded_to
+First moment CortexDB superseded its own record (exclusive). 
+null
+ = current
+Events have just two fields: 
+observed_at
+ and 
+recorded_at
+. Events are atomic in time and never superseded.
+How do you write temporal queries?
+Pass the 
+temporal
+ block to 
+/v1/recall
+, 
+/v1/answer
+, and the layer-read endpoints:
+{
+ "temporal": {
+ "as_of": "2026-05-01T00:00:00Z",
+ "valid_during": { "from": "2026-04-01", "to": "2026-04-30" },
+ "natural": "last 30 days",
+ "reference_date": "2026-05-15T00:00:00Z"
+ }
+}
+Field
+Semantics
+as_of
+Clips both axes: 
+recorded_* ≤ as_of
+ AND 
+valid_from ≤ as_of < valid_to
+valid_during
+Window on the world-time axis
+recorded_during
+Window on the ingest-time axis
+natural
+Parsed phrase (
+last week
+, 
+this quarter
+, 
+fiscal Q3
+, ...)
+reference_date
+Anchor for 
+natural
+ phrases; default = request time
+as_of
+ and 
+include_superseded
+ apply conjunctively — 
+as_of
+ clips both axes; 
+include_superseded=true
+ additionally returns historical versions whose 
+recorded_to ≤ as_of
+.
+How do you query supersession chains?
+When new evidence arrives about a 
+(subject, predicate)
+ already on file, the older fact's 
+valid_to
+ (and possibly 
+recorded_to
+) is closed. The chain is preserved — you can query it with 
+GET /v1/facts/timeline
+:
+{
+ "subject": { "id": "ent_acme_corp" },
+ "predicate": "deal_stage",
+ "timeline": [
+ { "value": "poc", "valid_from": "...", "valid_to": "2026-04-10T..." },
+ { "value": "close", "valid_from": "2026-04-10T...", "valid_to": "2026-05-13T..." },
+ { "value": "signed", "valid_from": "2026-05-13T...", "valid_to": null }
+ ]
+}
+This is also what powers the 
+"why do you think that?"
+ trail on beliefs, as supersession chains carry forward as evidence.
+How does natural-language parsing work?
+CortexDB ships with defaults like 
+today
+, 
+yesterday
+, 
+last week
+, and 
+this quarter
+. You can register tenant-specific phrases (e.g., 
+"fiscal Q3"
+, 
+"holiday freeze"
+) via 
+POST /v1/temporal/phrases
+.
+What the bi-temporal model enables
+Historical reconstruction:
+ Agents can query exactly what they knew at a specific point in the past, enabling perfect audit trails.
+Non-destructive updates:
+ New information gracefully supersedes old claims without erasing the original context, preserving the timeline of memory.
+Accurate temporal reasoning:
+ Agents can seamlessly answer complex time-bounded queries, such as retrieving facts valid only during a specific quarter.
+How CortexDB compares to vector databases
+Pinecone and Neo4j only reflect the current state of knowledge. Modifications in standard databases overwrite the old vector or graph edge. CortexDB achieves 93.8% on LongMemEval-S (beating Mem0 at 93.4%), and our approach guarantees that agents can reason temporally across a deep history. CortexDB embeds a bi-temporal architecture directly into our 4-channel hybrid retrieval (BM25 + HNSW vectors + graph traversal + cross-encoder reranking). Cognitive Recall always fetches the contextually appropriate historical record while respecting strict access boundaries across hierarchical scopes.
+FAQ
+What is a bi-temporal model?
+A bi-temporal model is a system that independently tracks two axes of time: when an event occurred in the real world (validity time) and when the system recorded it (recorded time).
+Why do AI agents need bi-temporal memory?
+Single-axis systems answer either historical truth or historical knowledge, but not both. Bi-temporal memory enables agents to accurately reconstruct historical model state and reason about events that happened in the past.
+Does Cognitive Recall support temporal queries?
+Yes. Cognitive Recall seamlessly integrates temporal filters like 
+as_of
+ and 
+valid_during
+ directly into its recall strategy, safely clipping results across all memory layers.
+What are the four time fields in CortexDB?
+Every derived record except Events carries 
+valid_from
+, 
+valid_to
+, 
+recorded_from
+, and 
+recorded_to
+. Events only carry 
+observed_at
+ and 
+recorded_at
+.
+Can agents query supersession chains?
+Yes. Agents can query the full history of any 
+(subject, predicate)
+ pair via the timeline endpoint, retrieving every past value and its validity window.
+Layers
+The five layers of memory in CortexDB.
+Lifecycle
+The six atomic operations of memory.

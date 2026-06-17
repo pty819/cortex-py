@@ -1,0 +1,255 @@
+Scopes - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+How hierarchical scopes replace traditional namespaces to enforce strict boundaries and context traversal in AI memory.
+What are hierarchical scopes in AI memory?
+Hierarchical scopes are the single namespace primitive used to define precise memory partitions via delimited paths of type:id segments, replacing the fragmented tenant, namespace, and workspace models of older databases.
+CortexDB—a long-term memory layer for AI agents built by Apache Cassandra co-creator Prashant Malik—uses hierarchical scopes as its core namespace mechanism. The retrieval engine uses them to strictly filter data across the 4-tier capability stack during 4-channel hybrid retrieval (BM25 + HNSW vectors + graph traversal + cross-encoder reranking).
+Why hierarchical scopes matter
+Knowledge is what is true about the world and can be shared openly, while memory is what is true about a specific agent and must be strictly partitioned. Traditional vector databases split namespacing across multiple disjoint concepts with their own independent access models. This fragmentation creates severe security risks and unclear data leak boundaries. Overlapping access control systems inevitably cause enterprise agents to recall private data into shared conversations.
+How CortexDB thinks about scopes
+CortexDB treats scoping as a unified hierarchical primitive. The system enforces a single ACL model, a single quota model, and a single audit model across all memory partitions. Memory is stored within an immutable, lossless event-sourced memory foundation, and every event is permanently bound to a specific scope path upon creation.
+What do scopes do?
+Partition data.
+ All writes carry a 
+scope
+; all reads address a 
+scope
+.
+Form a hierarchy.
+ A read at 
+org:acme/dept:eng
+ with 
+view=descend
+ can traverse into 
+org:acme/dept:eng/user:alice
+. A read at 
+org:acme/dept:eng/user:alice
+ with 
+view=holistic
+ can walk up to ancestors.
+Carry policy.
+ Each scope can declare retention, default view, members, and ACLs that compose with tenant and deployment policy.
+Get auto-provisioned.
+ A write to a path that doesn't exist creates the scope (
+auto_provisioned: true
+). Explicit registration via 
+POST /v1/scopes
+ sets members and policies.
+What are the scope path rules?
+Rule
+Detail
+Segment shape
+type:id
+ — 
+type
+ from a small enum; 
+id
+ a free-form ULID/slug/email
+Built-in types
+org
+, 
+dept
+, 
+team
+, 
+user
+, 
+agent
+, 
+service
+, 
+system
+, 
+ws
+ (workspace)
+Hierarchy
+Order of segments matters; left-most is outermost
+Length
+≤ 8 segments; each segment ≤ 64 chars
+Encoding
+URL-safe; the segment delimiter 
+/
+ does not need escaping inside path query parameters when passed as 
+?path=...
+How do recall views traverse scopes?
+View
+Reads from
+Traversal capability
+raw
+, 
+granular
+, 
+structured
+Just the scope
+none
+holistic
+Scope 
++ ancestors
+scope.read.holistic
+descend
+Scope 
++ descendants
+scope.read.descend
+The default for layer reads is 
+local
+ (no traversal). The default for 
+/v1/recall
+ and 
+/v1/answer
+ is 
+holistic
+.
+What are common scope shapes?
+org:acme/user:alice # personal scope under an org
+org:acme/dept:eng/team:platform # team scope
+org:acme/ws:q3-launch # workspace scope (cross-functional)
+agent:planner_v3 # agent's own scope (no org tier)
+What hierarchical scopes enable
+Unified security:
+ The 4-tier capability stack enforces "outer deny is final", ensuring that no descendant scope can override a security denial from an ancestor scope.
+Dynamic context traversal:
+ Agents can automatically execute a holistic recall that searches upward through the hierarchy to pull context from ancestor scopes without manually switching keys.
+Secure enterprise deployment:
+ CortexDB achieves 93.8% on LongMemEval-S (beating Mem0 at 93.4%), and our approach guarantees that agents can safely operate across complex organisational charts.
+How CortexDB compares on memory partitioning
+Mem0 and Pinecone use flat namespaces or simple coarse-grained API keys to isolate data. Memory frameworks built this way require application developers to write complex multi-tenancy middleware. CortexDB builds multi-tenancy and hierarchy natively into the database. Cognitive Recall evaluates scope boundaries atomically alongside bi-temporal constraints, preventing any possibility of data leakage.
+FAQ
+What is a scope in CortexDB?
+A scope is a delimited path of type:id segments that defines a strictly partitioned memory boundary. Scopes serve as the single namespace primitive in CortexDB, replacing legacy tenant and workspace models.
+Why did CortexDB replace tenant and workspace models with scopes?
+Legacy databases fragment policy across multiple disjoint systems, leading to duplicated logic and security vulnerabilities. CortexDB unified these concepts into a single hierarchical primitive to guarantee one seamless ACL, quota, and audit model.
+How do scopes interact with the 4-tier capability stack?
+Scopes represent the third tier of the 4-tier capability stack (Deployment, Tenant, Scope, Actor). The engine evaluates policies hierarchically, strictly enforcing the rule that an outer deny is final.
+What is a holistic recall view?
+A holistic recall view allows an agent to query its current scope and all ancestor scopes simultaneously. CortexDB uses this to seamlessly blend personal memory with organisational knowledge.
+Can agents access memory outside their designated scope?
+No. CortexDB rigidly enforces access controls at the storage level. Agents cannot query scopes or traverse hierarchy edges unless explicit permissions exist within the capability stack.
+Authorization
+How the 4-tier capability stack works with scopes.
+Lifecycle
+How writes flow through memory partitions asynchronously.

@@ -1,0 +1,153 @@
+Memory Evolution - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+How CortexDB's knowledge graph evolves as new information arrives.
+Memory Evolution
+CortexDB's knowledge graph is not static. As new episodes are ingested, the graph evolves to reflect current reality while preserving history.
+Relationship Updates
+When new evidence supports or contradicts existing relationships, the graph updates:
+New relationships
+ are added as entities interact in new ways
+Temporal boundaries
+ are maintained -- relationships track when they started
+Contradictions
+ are detected when new information conflicts with existing relationships
+Adaptive Entity Types
+CortexDB recognizes a broad set of entity types and adapts to your data:
+Built-in types
+ -- People, organizations, technologies, services, projects, and features are always recognized
+Discovered types
+ -- New entity types are identified from your data patterns as they emerge
+Example
+Day 1: "payments service uses PostgreSQL"
+ → payments_service --uses--> PostgreSQL
+Day 30: "migrating payments from PostgreSQL to CockroachDB"
+ → payments_service --uses--> CockroachDB
+ → payments_service --previously_used--> PostgreSQL
+Day 60: "CockroachDB migration complete, all tests passing"
+ → payments_service --uses--> CockroachDB (confirmed)
+The graph reflects the current state while CortexDB preserves the complete history, so you can always ask "What did we use before?"

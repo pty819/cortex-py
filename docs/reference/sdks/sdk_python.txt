@@ -1,0 +1,292 @@
+Python SDK - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Reference for cortexdb v1 — V1Client, AsyncV1Client, and the typed exception hierarchy.
+Python SDK
+The official Python client for CortexDB v1. Sync (
+V1Client
+) and async (
+AsyncV1Client
+) variants share the same surface — all 18 endpoint methods.
+pip install cortexdbai
+Requires Python 3.9+. Package name: 
+cortexdb
+. Module: 
+cortexdb.v1
+.
+Construction
+from cortexdb.v1 import V1Client
+client = V1Client(
+ api_url="https://api-v1.cortexdb.ai",
+ actor="user:alice",
+ bearer="v4.public.eyJpc3MiOi...",
+ timeout=30.0,
+)
+Argument
+Default
+Notes
+api_url
+https://api-v1.cortexdb.ai
+v1 surface URL
+actor
+"user:default"
+Sent as 
+X-Cortex-Actor
+; must match the token's 
+sub
+bearer
+None
+PASETO v4 public token. Optional in 
+dev_local
+ deployments
+timeout
+30 s
+Per-request timeout
+Use as a context manager so the underlying 
+requests.Session
+ is cleaned up:
+with V1Client(api_url="...", actor="user:alice", bearer=tok) as client:
+ pack = client.recall(scope="org:acme/user:alice")
+Auth
+client.whoami()
+# → { caller, tenant_id, deployment_preset, effective_capabilities, token }
+client.mint_token(
+ subject="user:alice",
+ ttl_seconds=3600,
+ scopes=["org:acme/user:alice"],
+)
+# → { "token": "v4.public...", "expires_at": "2026-05-15T11:42:00Z" }
+Write path
+client.experience(
+ scope="org:acme/user:alice",
+ text="Acme upgraded to 200 seats.",
+ modality="conversation",
+ role="user",
+ observed_at="2026-05-15T10:42:00Z",
+ idempotency_key="alice-chat-001",
+ wait=None,
+)
+client.experience_bulk(
+ scope="org:acme/user:alice",
+ items=[
+ {"modality": "conversation", "content": {...}, "context": {...}, "idempotency_key": "k1"},
+ {"modality": "conversation", "content": {...}, "context": {...}, "idempotency_key": "k2"},
+ ],
+ ordering="strict_temporal",
+)
+wait
+ ∈ 
+None | "captured" | "indexed" | "consolidated"
+. For full envelope shape (subjects, directives, blob refs, triples) see 
+Experience Envelope
+.
+Read path
+client.recall(
+ scope="org:acme/user:alice",
+ view="holistic",
+ query="What did we decide about Acme?",
+ include=["beliefs", "facts", "episodes"],
+ budgets={"max_tokens": 4000},
+ temporal={"natural": "last 30 days"},
+)
+# → StratifiedPack: layers, context_block, provenance, diagnostics, pack_id
+client.answer(
+ scope="org:acme/user:alice",
+ question="Did Acme renew?",
+ view="holistic",
+ answer_model="claude-opus-4-6",
+ temporal={"natural": "last 30 days"},
+)
+# → { answer, citations, provenance, diagnostics, pack_id, as_of }
+Layer reads
+client.events(scope="org:acme/user:alice", view="local", limit=50)
+client.episodes(scope="org:acme/user:alice", view="local")
+client.facts(scope="org:acme/user:alice", subject="ent_acme_corp", predicate="deal_stage",
+ as_of="2026-04-15T00:00:00Z")
+client.beliefs(scope="org:acme/user:alice", view="local")
+client.belief_why(belief_id="belief_01HX...")
+client.understanding(scope="org:acme/user:alice", view="local")
+Trigger an async synthesis pass:
+client.build_episodes(scope="org:acme/user:alice")
+client.build_beliefs(scope="org:acme/user:alice")
+client.synthesize(scope="org:acme/dept:eng", topics=["sales_process"], force=False)
+Forget
+client.forget(
+ scope="org:acme/user:alice",
+ layers=["beliefs"],
+ selector={"predicate": "is_likely_to_renew"},
+ cascade="derived_only",
+ audit_note="User retracted speculation",
+ idempotency_key="forget-alice-001",
+)
+For GDPR reference-counted erasure use the 
+/v1/erasures
+ family directly — see 
+Erasures
+.
+Audit
+client.audit_list(actor="user:alice", capability="forget.gdpr", limit=100)
+client.audit_verify(audit_id="audit_01HX...", body="<canonicalized JSON>")
+Admin
+client.layer_stats() # GET /v1/admin/layers/stats (experimental)
+Exception hierarchy
+All HTTP errors raise a subclass of 
+cortexdb.v1.V1Error
+:
+from cortexdb.v1 import (
+ V1Error, # base
+ V1APIError, # generic API error envelope
+ V1AuthError, # 401
+ V1PolicyDeniedError, # 403 — exposes .tier and .capability
+ V1RateLimitError, # 429
+ V1NotConfiguredError, # 503
+ V1ConnectionError, # network failure
+ V1TimeoutError, # timeout
+)
+try:
+ client.experience(scope="...", text="...", observed_at="...", idempotency_key="...")
+except V1PolicyDeniedError as e:
+ print(f"denied by {e.tier} tier: capability {e.capability}")
+except V1RateLimitError:
+ time.sleep(1.0)
+Async variant
+AsyncV1Client
+ mirrors 
+V1Client
+ exactly — every method is 
+async
+. Backed by 
+httpx.AsyncClient
+.
+from cortexdb.v1 import AsyncV1Client
+async with AsyncV1Client(
+ api_url="https://api-v1.cortexdb.ai",
+ actor="user:alice",
+ bearer=tok,
+) as client:
+ pack = await client.recall(scope="org:acme/user:alice", view="holistic")
+ ans = await client.answer(scope="org:acme/user:alice", question="Did Acme renew?")

@@ -1,0 +1,223 @@
+POST /v1/answer - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Recall + LLM in one call. Returns answer text, citations, full provenance, and timings.
+POST /v1/answer
+Recall + LLM composed into one round-trip. Returns the LLM answer plus the same 
+pack_id
+, 
+provenance
+, and 
+citations
+ you'd get from 
+/v1/recall
+ — 
+/v1/answer
+ is 
+not
+ an opaque endpoint; it's literally recall ⊕ LLM call.
+For raw retrieval without the LLM step, use 
+POST /v1/recall
+.
+Capability
+scope.read.local
+ (always)
+Traversal caps per 
+view
+llm.invoke
+diagnostics.read
+ when 
+diagnostics ≠ "none"
+Request
+{
+ "scope": "org:acme/dept:eng/user:alice",
+ "view": "holistic",
+ "question": "Did Acme renew?",
+ "answer_model": "claude-opus-4-6",
+ "answer_max_tokens": 1500,
+ "include": ["beliefs", "facts", "episodes"],
+ "temporal": { "natural": "last 30 days" },
+ "budgets": { "max_tokens": 4000, "per_layer_limits": { "facts": 20, "beliefs": 10 } },
+ "citation_mode": "inline_with_markers",
+ "diagnostics": "summary",
+ "use_pack_id": null,
+ "stream": false
+}
+Field
+Type
+Notes
+question
+string
+The user's question.
+answer_model
+string
+LLM identifier (provider-routed). Server-side default: 
+claude-opus-4-6
+.
+answer_max_tokens
+int
+Output cap. Default 1500.
+use_pack_id
+string | null
+Skip recall and reuse a previously generated pack (60 s TTL). When set, recall fields are ignored.
+(other fields)
+—
+Same semantics as 
+/v1/recall
+.
+Response
+{
+ "pack_id": "pack_01HX...",
+ "answer": "Acme upgraded to 200 seats on 2026-05-13. They did not renew their previous contract; they signed a new one. [1][2]",
+ "citations": [
+ { "marker": "[1]", "layer": "fact", "id": "fact_01HX...", "support_strength": 0.91 },
+ { "marker": "[2]", "layer": "event", "id": "evt_01HX...", "support_strength": 0.87 }
+ ],
+ "provenance": { "trail": [...], "citations": {...} },
+ "diagnostics": {
+ "recall_ms": 412,
+ "llm_ms": 814,
+ "total_ms": 1240,
+ "pack_used": { "facts": 5, "beliefs": 2, "episodes": 1 },
+ "answer_model": "claude-opus-4-6",
+ "answer_tokens": { "prompt": 1284, "completion": 218 }
+ },
+ "as_of": "2026-05-15T10:42:09Z"
+}
+Streaming — 
+?stream=true
+Token-by-token streaming. Event sequence:
+event: token data: { "text": "Acme " }
+event: token data: { "text": "upgraded " }
+...
+event: citations data: [ { "marker": "[1]", ... } ]
+event: provenance data: { "trail": [...], "citations": {...} }
+event: diagnostics data: { "recall_ms": 412, "llm_ms": 814, "total_ms": 1240 }
+event: done data: { "pack_id": "pack_01HX...", "as_of": "..." }
+Returns 
+X-Cortex-Stability: experimental
+ until the token-stream UX is pinned.

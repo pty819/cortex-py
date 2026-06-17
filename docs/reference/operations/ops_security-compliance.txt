@@ -1,0 +1,523 @@
+Security & Compliance - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Encryption, TLS / mTLS, RBAC, rate limits, breach detection, audit, SIEM, data residency, DSAR — every governance knob in cortex.toml.
+Security & Compliance
+This page covers 
+[security]
+, 
+[governance]
+, and 
+[compliance]
+ in 
+cortex.toml
+ — about 80 fields. 
+None of them are on by default
+: the out-of-the-box config is permissive so you can evaluate quickly. Before going to production, walk this page top to bottom and turn things on.
+Governance — the foundation
+Three things every production deployment should set, even before the security section:
+[governance]
+default_retention_ttl_secs = 2592000 # 30 days; null = forever
+max_retention_secs = 220752000 # 7 years (default cap)
+pii_detection = true # default
+pii_handling = "Flag" # "Flag" (default) | "Block"
+audit_logging = true # default
+Field
+Default
+What it does
+default_retention_ttl_secs
+null
+ (forever)
+TTL applied to events with no explicit retention. Once exceeded, events are eligible for auto-deletion.
+max_retention_secs
+7 years
+Hard upper bound. Even explicit 
+retention: "forever"
+ is capped at this.
+pii_detection
+true
+Scan every event for PII (names, emails, SSN, credit-card patterns) before commit.
+pii_handling
+"Flag"
+"Flag"
+: accept and mark for async re-scan. 
+"Block"
+: reject event if scanner is down or finds PII.
+audit_logging
+true
+Log every read/write to the audit trail (queryable via 
+/v1/admin/audit
+).
+Recommendation:
+ Always set an explicit 
+default_retention_ttl_secs
+. Forever-retention is appropriate for some workloads (your own personal memory), wrong for almost all customer-data workloads (GDPR right-to-erasure becomes a manual lift), and never appropriate for HIPAA (max 6 years post-care).
+Encryption at rest
+[security.encryption]
+enabled = false # default off — turn this on
+key_file = "/etc/cortexdb/keys/master.key"
+key_rotation_interval_secs = 7776000 # 90 days
+blob_store_sse_kms = false # use cloud KMS for blobs
+Field
+Default
+What it does
+enabled
+false
+Master switch. When true, all RocksDB column families and the WAL are encrypted with AES-256-GCM.
+key_file
+—
+Path to the master key file (32 random bytes, base64 or raw). Required when 
+enabled = true
+.
+key_rotation_interval_secs
+90 days
+How often the master key is rotated. Old keys retained for decrypting historical segments.
+blob_store_sse_kms
+false
+If true, delegate blob encryption to the cloud provider (S3 SSE-KMS / GCS CMEK / Azure SSE-CMK).
+Setup:
+# Generate a master key
+head -c 32 /dev/urandom | base64 > /etc/cortexdb/keys/master.key
+chmod 600 /etc/cortexdb/keys/master.key
+chown cortexdb:cortexdb /etc/cortexdb/keys/master.key
+The key file must be readable by the 
+cortexdb
+ user and nobody else. Mode 
+0600
+.
+For HSM / cloud-KMS-managed keys, mount the unwrapped key into a tmpfs and point 
+key_file
+ at it; rotate via your KMS rotation policy rather than CortexDB's.
+TLS and mTLS
+[security.tls]
+api_tls_enabled = false # default — terminate at LB instead
+cert_path = "/etc/cortexdb/tls/cert.pem"
+key_path = "/etc/cortexdb/tls/key.pem"
+ca_cert_path = "/etc/cortexdb/tls/ca.pem"
+mtls_enabled = false # require client certs on internal RPC
+min_tls_version = "1.2" # "1.2" | "1.3"
+Field
+Default
+What it does
+api_tls_enabled
+false
+Terminate TLS on the API port itself. Off by default because most deployments terminate at an LB (caddy / nginx / ALB / cloudflare).
+cert_path
+, 
+key_path
+—
+PEM-formatted cert and key. Required when 
+api_tls_enabled = true
+.
+ca_cert_path
+—
+CA bundle for client certificate validation. Required when 
+mtls_enabled = true
+.
+mtls_enabled
+false
+Require client certificates on internal RPC (between cluster nodes). Strongly recommended for multi-tenant or zero-trust networks.
+min_tls_version
+"1.2"
+Don't allow older TLS. Set to 
+"1.3"
+ for strict deployments.
+Recipes:
+For a typical "TLS at the LB, plaintext to CortexDB inside VPC" deployment, leave everything off — your LB does the work.
+For zero-trust ("encrypt everything, even within the VPC"), enable both API TLS and mTLS, and set 
+min_tls_version = "1.3"
+. Every client (SDK, dashboard, peer node) needs its own certificate signed by the CA at 
+ca_cert_path
+.
+RBAC and authentication
+[security.rbac]
+enabled = false # default off — anonymous access
+default_role = "reader" # role assigned to unauthenticated requests
+oidc_issuer = "" # OIDC discovery URL
+oidc_audience = "cortexdb" # JWT aud claim
+role_mappings = [] # OIDC group → role mappings
+require_mfa = false
+amr_values = [] # allowed AMR claim values
+acr_values = [] # allowed ACR claim values
+When 
+enabled = true
+, every request must carry a valid OIDC bearer token. The token's claims are mapped to a role via 
+role_mappings
+, and the role's capabilities determine what the actor can read or write.
+Example 
+role_mappings
+ for an enterprise OIDC IdP:
+[security.rbac]
+enabled = true
+oidc_issuer = "https://login.acme.com/realms/main"
+oidc_audience = "cortexdb"
+[[security.rbac.role_mappings]]
+oidc_group = "cortexdb-admins"
+role = "admin"
+[[security.rbac.role_mappings]]
+oidc_group = "engineers"
+role = "writer"
+[[security.rbac.role_mappings]]
+oidc_group = "support"
+role = "reader"
+The role catalog (admin/writer/reader and their capabilities) is shipped with the binary and documented in 
+/docs/concepts/authorization
+. Custom roles can be defined under 
+[[security.rbac.custom_role]]
+ blocks.
+Anonymous / dev mode:
+ with 
+rbac.enabled = false
+, every request gets 
+default_role
+ and CortexDB does no JWT validation. This is the right shape for single-tenant private deployments behind a trusted LB; it is the wrong shape for any multi-tenant or internet-exposed deployment.
+Rate limiting
+[security.rate_limit]
+enabled = false # default — no rate limit
+default_rpm = 600 # requests per minute per actor
+default_rpd = 50000 # requests per day per actor
+burst = 20 # short-burst capacity
+Per-actor rate limits applied at the request boundary. Limits are stored in-memory per process — in cluster mode, an actor that distributes their requests across nodes sees the total throughput multiply by cluster size. For strict cross-cluster limits, terminate rate limiting at the LB.
+Headers on every authenticated response:
+X-RateLimit-Limit: 600
+X-RateLimit-Remaining: 587
+X-RateLimit-Reset: 2026-05-18T15:42:00Z
+Breach detection
+[security.breach_detection]
+enabled = false # default off
+max_failed_auth = 5 # failed auths before lockout
+auth_window_secs = 300 # 5-min sliding window
+lockout_duration_secs = 3600 # 1-hour lockout
+breach_from_email = "
+[email protected]
+" # alert sender
+webhook_url = "" # POST URL for alerts
+anomaly_detection_enabled = false # ML-based anomaly scoring (experimental)
+When enabled, failed auth attempts (bad JWT, expired token, denied capability) are counted per actor. Exceeding 
+max_failed_auth
+ within 
+auth_window_secs
+ triggers a 
+lockout_duration_secs
+ block and an alert via email or webhook.
+Field-level access control
+[security.field_access]
+enabled = false # default off
+[security.field_access.masked_fields]
+reader = ["content.text", "subject"] # roles see this many fields masked
+writer = []
+admin = []
+When enabled, response payloads have masked fields stripped or replaced with 
+"[REDACTED]"
+ based on the requesting actor's role. Useful for read-heavy workflows that need to ship recall results into a UI without exposing the raw memory text.
+Data residency
+[compliance.data_residency]
+enabled = false # default off
+default_region = "us-east-1"
+allowed_regions = [] # empty = allow all
+require_residency_tag = false # reject events without a region tag
+When enabled, every event must include a region tag (either explicitly in the API call or inferred from the actor's IdP claims). Writes to a region not in 
+allowed_regions
+ are rejected with 
+403 residency_violation
+.
+In cluster mode, residency-tagged writes are partitioned so they only land on nodes within the allowed region — useful for EU-only or US-only data planes within a global cluster.
+Consent and purpose
+[compliance.consent]
+require_consent = false # default — no consent enforcement
+default_purposes = ["customer_support"]
+max_validity_secs = 31536000 # 1 year default
+When 
+require_consent = true
+, every write must reference a consent record (consent ID + purposes). Reads filter to events whose consent ID is still valid and whose declared purposes include the calling actor's purpose.
+This is the schema scaffolding for GDPR / CCPA "lawful basis for processing" enforcement — your IdP or consent management platform mints consent records via 
+POST /v1/consent
+, and CortexDB enforces them on every subsequent read/write.
+Classification and auto-redaction
+[compliance.classification]
+auto_classify = false # use LLM to assign sensitivity tags on write
+default_sensitivity = "internal" # "public" | "internal" | "confidential" | "restricted"
+auto_redact_above = "confidential" # auto-redact fields above this level
+When 
+auto_classify = true
+, the same LLM that does entity extraction also assigns a sensitivity tag (
+public
+ / 
+internal
+ / 
+confidential
+ / 
+restricted
+). When 
+auto_redact_above
+ is set, fields above the threshold are stored encrypted and decrypted only on read by authorized roles.
+DSAR (Data Subject Access Requests)
+[compliance.dsar]
+enabled = false # default off
+When enabled, the 
+/v1/erasures
+ endpoint accepts subject-targeted delete requests. Operational shape:
+# 1. Preview: see what would be deleted
+curl -X POST https://api/v1/erasures/preview \
+ -H "Authorization: Bearer $TOKEN" \
+ -d '{"scope": "org:acme/user:alice", "audit_note": "DSR-1234 preview"}'
+# 2. Execute: actually delete
+curl -X POST https://api/v1/erasures \
+ -H "Authorization: Bearer $TOKEN" \
+ -d '{
+ "scope": "org:acme/user:alice",
+ "from_preview_id": "ervw_01HX...",
+ "idempotency_key": "dsr-1234",
+ "audit_note": "DSR-1234 fulfilled"
+ }'
+Erasures cascade across all five memory layers (Events / Episodes / Facts / Beliefs / Understanding) and are recorded in the audit log with the 
+audit_note
+. The original tombstones are kept for the duration of 
+governance.max_retention_secs
+ so re-derivations can't reincarnate erased data.
+SIEM forwarding
+[compliance.siem]
+enabled = false # default off
+format = "cef" # "cef" | "leef" | "json"
+output_path = "/var/log/cortexdb/siem.log"
+webhook_urls = [] # POST endpoints
+datadog_api_key = "" # direct Datadog ingest
+splunk_hec_token = "" # Splunk HTTP Event Collector token
+batch_size = 100 # events per flush
+flush_interval_secs = 30 # max delay before flush
+When enabled, security-relevant events (auth success/failure, rate-limit hits, breach alerts, erasures, PII-block events, capability denials) are formatted in the configured SIEM format and shipped to:
+The local log file at 
+output_path
+ (always, for backup)
+Every URL in 
+webhook_urls
+ (HTTP POST, JSON body)
+Datadog (if 
+datadog_api_key
+ is set)
+Splunk HEC (if 
+splunk_hec_token
+ is set)
+The CEF format is the most widely supported in enterprise SIEM tools; use JSON for cloud-native log aggregators (Loki, OpenSearch, BigQuery).
+Cross-agent visibility
+[compliance.cross_agent]
+enabled = false # default off
+default_visibility = "private" # "private" | "tenant" | "global"
+When enabled and 
+default_visibility = "tenant"
+, agents within the same tenant scope can see each other's memories by default. Useful for multi-agent systems (a planner agent and an executor agent sharing context). When 
+"private"
+ (the default), every agent is isolated and explicit grants are required for cross-agent reads.
+Backups
+Already covered in 
+Storage & Cluster
+ but lives under 
+[security.backup]
+ because the schema groups it with the security controls:
+[security.backup]
+enabled = true
+provider = "s3"
+target_bucket = "acme-cortex-backups"
+backup_interval_secs = 3600
+retention_days = 90
+compression_enabled = true
+Deployment profile
+[deployment]
+profile = "custom" # "startup" | "growth" | "enterprise" | "custom"
+features = {} # per-feature gate overrides
+The 
+profile
+ field is a shorthand that gates enterprise features as a bundle:
+Profile
+What's enabled
+startup
+Basics only: encryption, RBAC, audit. No SIEM, no DSAR, no residency.
+growth
+Adds rate limits, breach detection, field-access control, basic SIEM.
+enterprise
+All 13 enterprise features on: SIEM, DSAR, residency, classification, consent, cross-agent, KMS, ...
+custom
+No bundle. Each feature's individual 
+enabled
+ flag governs.
+Use 
+features
+ to override individual gates inside a bundle:
+[deployment]
+profile = "growth"
+[deployment.features]
+siem = true # enable SIEM despite using "growth" profile
+dsar = true # enable DSAR explicitly
+A compliance-shaped checklist
+Before you ship to a regulated environment, verify each item:
+governance.default_retention_ttl_secs
+ set to your data class's max retention
+governance.pii_handling = "Block"
+ (fail-closed on PII scanner failure)
+governance.audit_logging = true
+ (default; verify in startup logs)
+security.encryption.enabled = true
+ with 
+key_file
+ owned 
+0600
+ by 
+cortexdb
+security.tls.api_tls_enabled = true
+ OR TLS terminated at a LB you trust
+security.tls.mtls_enabled = true
+ for inter-node RPC in cluster mode
+security.tls.min_tls_version = "1.3"
+security.rbac.enabled = true
+ with OIDC issuer set
+security.rate_limit.enabled = true
+security.breach_detection.enabled = true
+ with 
+webhook_url
+ to your SOC
+compliance.data_residency.enabled = true
+ if you have regional obligations
+compliance.dsar.enabled = true
+ if you take GDPR/CCPA DSARs
+compliance.siem.enabled = true
+ with at least one 
+webhook_url
+ or HEC token
+[security.backup]
+ configured with off-host target and 
+≥30d
+ retention
+Then run the Enterprise profile config from 
+Profiles & Presets
+ as your starting point.
+Next steps
+Profiles & Presets
+ — see the full Enterprise profile
+Storage & Cluster
+ — backups and the underlying durability story
+/docs/concepts/authorization
+ — the role / capability model in detail

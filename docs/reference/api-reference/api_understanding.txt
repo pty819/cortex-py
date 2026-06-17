@@ -1,0 +1,227 @@
+Understanding - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Synthesized concept layer — list, get, related, coverage, synthesize.
+Understanding
+Understanding is the 
+synthesized concept layer
+: LLM-extracted concepts, themes, and relationships about a scope. Built async; the responses carry 
+_partial: true
+ until the synthesizer ships fully.
+Stability: 
+beta
+ for reads; 
+experimental
+ for 
+POST /v1/understanding/synthesize
+.
+GET /v1/understanding
+GET /v1/understanding
+ ?scope=org:acme/dept:eng
+ &topic=B2B+SaaS
+ &depth=2
+ &limit=50
+Response
+{
+ "items": [
+ {
+ "concept_id": "cn_01HX...",
+ "scope": "org:acme/dept:eng",
+ "name": "Q3 renewal motion",
+ "topic": "sales_process",
+ "version": 7,
+ "summary": "Multi-touch renewal cycle starting with POC extension at quarter mark...",
+ "supports": ["fact_01HX...", "ep_01HX..."],
+ "related": [{ "concept_id": "cn_01HY...", "relation": "specializes" }],
+ "confidence": 0.74,
+ "valid_from": "2026-05-10T00:00:00Z"
+ }
+ ],
+ "_partial": true
+}
+GET /v1/understanding/
+Returns the full concept record.
+GET /v1/understanding/
+/related
+Walks the relation graph from a concept.
+GET /v1/understanding/{concept_id}/related
+ ?relation=specializes
+ &depth=2
+ &limit=50
+relation
+ ∈ 
+{ specializes, generalizes, contrasts, co_occurs, causes }
+.
+GET /v1/understanding/coverage
+A snapshot of synthesis coverage across topics in a scope.
+GET /v1/understanding/coverage?scope=org:acme/dept:eng
+Response
+{
+ "scope": "org:acme/dept:eng",
+ "concept_count": 421,
+ "by_topic": [
+ { "topic": "sales_process", "concepts": 38, "avg_confidence": 0.74 },
+ { "topic": "product_features", "concepts": 92, "avg_confidence": 0.81 },
+ { "topic": "customer_personas", "concepts": 24, "avg_confidence": 0.62 }
+ ],
+ "synthesis_lag": "P2D",
+ "_partial": true
+}
+POST /v1/understanding/synthesize
+Capability:
+understanding.synthesize
+Trigger an on-demand synthesis pass for a scope. Returns 202 with a lifecycle stream URL. Stability: 
+experimental
+.
+Cost.
+ Synthesis calls an LLM — 
+Claude Opus 4.6
+ by default, configurable per deployment via 
+synthesizer.model
+. A single pass over a busy scope can issue tens to hundreds of completion calls (one per topic + relation-discovery pass) and counts against your tenant's LLM quota. Run it on a budget, prefer 
+topics=[...]
+ over an unrestricted pass, and watch for 
+429 quota_exceeded
+. On the free tier the capability is 
+denied
+ — synthesis is on by default for paid tiers only.
+{
+ "scope": "org:acme/dept:eng",
+ "topics": ["sales_process"],
+ "force": false
+}
+Response
+{
+ "job_id": "synth_01HX...",
+ "status": "running",
+ "lifecycle_stream": "/v1/lifecycle/stream?job_id=synth_01HX..."
+}
+If the synthesizer isn't configured, returns 
+503
+ with 
+SYNTHESIZER_UNCONFIGURED
+.

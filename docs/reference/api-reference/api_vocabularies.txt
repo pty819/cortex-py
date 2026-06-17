@@ -1,0 +1,177 @@
+Vocabularies - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Tenant-scoped controlled vocabularies — CRUD.
+Vocabularies
+A vocabulary is a tenant-scoped set of allowed values for a field (typically a predicate, entity type, or label namespace). The extractor uses vocabularies to coerce LLM-extracted strings to canonical IDs.
+Stability: 
+beta
+.
+POST /v1/vocabularies
+{
+ "name": "deal_stage",
+ "kind": "closed",
+ "values": ["lead", "qualified", "poc", "close", "signed", "lost"]
+}
+Field
+Type
+Notes
+name
+string
+Required. Tenant-unique.
+kind
+enum
+closed
+ (only these values allowed) or 
+open
+ (these values preferred, others kept).
+values
+string[]
+Required for 
+closed
+; optional seeds for 
+open
+.
+Returns 
+201
+ with the same shape.
+GET /v1/vocabularies
+List all vocabularies.
+GET /v1/vocabularies/
+Single vocabulary.
+PUT /v1/vocabularies/
+Replace values. For 
+closed
+ vocabularies, removed values are migrated to 
+null
+ in extracted facts.
+DELETE /v1/vocabularies/
+Returns 
+204
+. Facts using the vocabulary are 
+not
+ deleted — they retain their last extracted values.

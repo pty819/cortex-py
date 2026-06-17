@@ -1,0 +1,328 @@
+Command-Line Interface - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+cortexdb — a fast, full-coverage CLI for the v1 memory API.
+Command-Line Interface
+cortexdb-cli
+ is a Click + Rich CLI that wraps the v1 HTTP API in a small, fast binary. Anonymous signup in one command, no email or card; works against the public SaaS or any self-hosted CortexDB deployment.
+pip install cortexdb-cli
+Requires Python 3.10+.
+The three-line happy path
+cortexdb init # anonymous signup, writes ~/.cortexdb/state.json
+cortexdb experience "Q3 revenue: $2.4M, $10M ARR target" # store
+cortexdb recall "Q3 revenue?" # retrieve
+init
+ posts to 
+/v1/auth/signup
+, gets a token + actor + scope, and persists everything to 
+~/.cortexdb/state.json
+ (mode 0600 on POSIX). The token has a 7-day TTL on the free tier — re-run 
+init
+ to refresh, or pass 
+--api-key
+ + 
+--actor
+ when you have a permanent identity from your IdP.
+Commands
+Command
+What it does
+v1 endpoint
+cortexdb init
+Anonymous signup; persist 
+state.json
+POST /v1/auth/signup
+cortexdb experience "..."
+Store a memory
+POST /v1/experience
+cortexdb experience bulk file.jsonl
+Bulk-load envelopes
+POST /v1/experience/bulk
+cortexdb recall "..."
+Stratified context pack
+POST /v1/recall
+ (holistic)
+cortexdb search "..."
+Granular event hits
+POST /v1/recall
+ (granular)
+cortexdb answer "..."
+Recall + LLM answer
+POST /v1/answer
+cortexdb forget --memory-id ... --reason ...
+Delete with audit
+POST /v1/forget
+cortexdb episodes {list,get,delete}
+Episode + event ops
+/v1/episodes
+, 
+/v1/events/{id}
+cortexdb entities {list,get,link}
+Entity rollups
+/v1/facts
+cortexdb facts {list,timeline}
+Typed triples + bi-temporal lineage
+/v1/facts
+, 
+/v1/facts/timeline
+cortexdb beliefs {list,why,build}
+Aggregated beliefs + provenance
+/v1/beliefs*
+cortexdb understanding {list,coverage,synthesize}
+Synthesized concepts
+/v1/understanding*
+cortexdb scopes {list,register,members}
+Hierarchical scopes
+/v1/scopes*
+cortexdb auth {whoami,signup,tokens,revoke}
+Identity + mint + revoke
+/v1/auth*
+cortexdb policy {effective,deployment}
+What can this actor do, where?
+/v1/policy*
+cortexdb admin {health,usage,layers}
+Diagnostics
+/v1/auth/whoami
+, 
+/v1/admin/layers/stats
+cortexdb import data.{json,jsonl,csv,txt}
+Bulk ingest
+POST /v1/experience
+ per row
+cortexdb export -o backup.json
+Export memories
+POST /v1/export
+cortexdb config {show,set}
+Edit 
+~/.cortexdb/config.toml
+(local)
+cortexdb
+ (no args)
+Interactive REPL
+(wraps the above)
+cortexdb remember "..."
+ is a hidden alias for 
+experience
+ — kept so old scripts and muscle memory keep working.
+Pipe-friendly
+Auto-detects when stdout isn't a TTY and switches to JSON:
+cortexdb recall "Q3 revenue" | jq .context_block
+cortexdb facts list | jq '.items[] | {predicate, object}'
+echo "remember this" | cortexdb experience -
+cat envelopes.jsonl | cortexdb experience bulk -
+Force JSON any time with 
+--json
+.
+Configuration
+Three layers, in precedence order (high to low):
+CLI flags
+ — 
+--api-key
+, 
+--endpoint
+, 
+--actor
+, 
+--scope
+, 
+--profile
+Environment
+ — 
+CORTEXDB_API_KEY
+, 
+CORTEXDB_URL
+, 
+CORTEXDB_ACTOR
+, 
+CORTEXDB_SCOPE
+Persisted state
+:
+~/.cortexdb/config.toml
+ — endpoint, profile names (human-editable)
+~/.cortexdb/state.json
+ — token, actor, scope, expiry (managed by 
+init
+; 0600 on POSIX)
+The state.json format matches the 
+cortexdb-mcp
+ 0.3.0 server's, so a user who signed up through one tool can copy state across to use the other from the same anonymous identity.
+Auth notes
+The v1 API requires 
+both
+Authorization: Bearer <PASETO>
+ and 
+X-Cortex-Actor
+ on every request. The CLI stamps both for you — you never need to pass them by hand.
+401s show the specific error code (
+TOKEN_EXPIRED
+, 
+actor_mismatch
+, 
+INVALID_TOKEN_SIGNATURE
+) and the remediation: usually 
+cortexdb init
+.
+403s cite the missing capability and the policy tier that denied. If a recall returns 
+diagnostics.read denied
+, pass 
+--diagnostics none
+ — free-tier tokens don't carry 
+diagnostics.read
+. (The CLI defaults to 
+none
+ already.)
+Every authenticated response carries 
+X-RateLimit-Limit
+, 
+X-RateLimit-Reset
+, 
+X-Cortex-Token-Expires-In
+, and 
+X-Cortex-Token-Expires-At
+ headers; 
+cortexdb admin usage
+ surfaces them.
+Profiles
+Run against multiple deployments by passing 
+--profile
+:
+cortexdb --profile prod init --endpoint https://api-v1.cortexdb.ai
+cortexdb --profile staging init --endpoint https://staging.cortexdb.example
+cortexdb --profile staging experience "test memory"
+Each profile gets its own block in 
+~/.cortexdb/config.toml
+. The state.json is shared — if you need separate identities per profile, run 
+cortexdb auth signup --save
+ after switching.
+See also
+Python SDK
+ — programmatic access from Python.
+TypeScript SDK
+ — programmatic access from JS/TS.
+MCP Server
+ — same v1 surface exposed to Claude / Cursor / VS Code Copilot.
+Auth
+ — how tokens, actors, and capabilities fit together.

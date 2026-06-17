@@ -1,0 +1,374 @@
+Auth - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Anonymous signup, token mint, identity introspection, revocation.
+Auth
+CortexDB authenticates every request with a 
+PASETO v4 public
+ token. There are three documented ways to obtain one — see the 
+decision table on the Authorization concept page
+.
+Required headers on every request
+Authorization: Bearer <PASETO v4 public token>
+X-Cortex-Actor: user:alice
+X-Cortex-Actor
+ must match the token's 
+sub
+ claim, otherwise the server returns 
+401 
+actor_mismatch
+.
+POST /v1/auth/signup — Anonymous sign-up
+Capability:
+ none. Public endpoint.
+Mint an anonymous PASETO token, an actor ID, and a default scope path in one round trip. Designed for the "Try CortexDB" flow and for AI agents that need to self-install with zero human input. Free-tier — 
+7-day token TTL
+ (refresh by calling signup again).
+Request
+POST /v1/auth/signup
+Content-Type: application/json
+{}
+The body is currently always 
+{}
+ — future revisions may accept hints like preferred region, but no fields are required.
+Response
+{
+ "token": "v4.public.eyJpc3MiOi...",
+ "jti": "jti_019e2f...",
+ "expires_at": "2026-06-15T17:10:12Z",
+ "user_id": "user:u_019e2f188c1579...",
+ "scope": "org:u_019e2f.../user:u_019e2f...",
+ "tier": "free"
+}
+The returned 
+token
+ carries the free-tier capability set: 
+scope.read.local
+, 
+scope.read.holistic
+, 
+scope.read.descend
+, 
+scope.write
+, 
+scope.create.*
+, 
+understanding.read
+, 
+understanding.synthesize
+, 
+forget.cascade.derived_only
+, 
+lifecycle.subscribe
+, 
+llm.invoke
+, 
+blob.upload
+, 
+blob.read
+, 
+audit.read
+, 
+vocabulary.read
+, 
+temporal.phrases.read
+. Notably 
+not
+ included: 
+diagnostics.read
+, 
+auth.mint
+, 
+forget.gdpr
+.
+Aspirational capabilities.
+ A few names in that set are reserved against planned surfaces and are accepted by the policy engine but don't gate any 
+shipped
+ endpoint yet: 
+vocabulary.read
+ (the controlled-vocabulary endpoint is on the v1.1 roadmap), 
+lifecycle.subscribe
+ (the SSE 
+/v1/lifecycle/stream
+ endpoint streams in the Rust core but is not yet wired through the gateway), and 
+llm.invoke
+ (currently subsumed by per-endpoint quota checks on 
+/v1/answer
+ and 
+/v1/understanding/synthesize
+ — the standalone gate becomes load-bearing once 
+/v1/llm/*
+ proxy endpoints land). Holding them now means free-tier tokens won't need re-issuance when the endpoints flip on.
+Token lifecycle
+TTL is 
+7 days
+ on the free tier (
+/v1/auth/signup
+); 1–24 hours on paid tiers via 
+/v1/auth/tokens
+.
+No renew endpoint — call 
+/v1/auth/signup
+ again for a fresh anonymous identity. (To migrate data to a permanent account, see the 
+Pricing
+ page; the bridge from anonymous to permanent is an account upgrade, not a token renewal.)
+The server stamps every authenticated response with 
+X-Cortex-Token-Expires-In
+ (seconds remaining) and 
+X-Cortex-Token-Expires-At
+ (RFC 3339). A 
+Warning: 199
+ header fires when ≤72 h remain — read it on every response and refresh ahead of time.
+Also useful: 
+client.whoami()
+ returns the same expiry plus the effective capability set.
+Don't bury the token.
+ A week sounds long until your app embeds an anonymous-signup token in a saved-state blob and ships it. Two patterns that survive that:
+Refresh on 401.
+ Catch 
+V1AuthError
+ / 
+V1Error
+ with 
+error_code == "TOKEN_EXPIRED"
+ once, call 
+V1Client.signup()
+ (or your IdP equivalent), retry the original call. Don't loop more than once — if the second call also 401s, surface the error.
+Refresh ahead of time.
+ Persist 
+expires_at
+ next to the token. When 
+X-Cortex-Token-Expires-In
+ drops under ~86 400 (one day) or the 
+Warning: 199
+ header appears, refresh in the background before the next user-facing call.
+Service accounts on 
+/v1/auth/tokens
+ are short-lived by design (default 1 hour) — the expected pattern is "mint per session" or "mint per job," not "mint once at boot and cache forever."
+POST /v1/auth/tokens — Mint a token
+Capability:
+auth.mint
+ (typically granted only to server-side service accounts, IdP bridges, and the dashboard's BFF — 
+not
+ present on free-tier anonymous tokens).
+Short-lived PASETO v4 public tokens for M2M flows, SDK examples, and bootstrapping. Production callers should usually receive tokens from their IdP — this endpoint exists so deployments can mint tokens internally without a separate IdP dependency.
+{
+ "subject": "user:alice",
+ "ttl_seconds": 3600,
+ "scopes": ["org:acme/user:alice"]
+}
+Field
+Type
+Notes
+subject
+string
+Required. Sets 
+sub
+ on the minted token.
+ttl_seconds
+int
+Default 3600. Hard ceiling: tenant-configured (typ. 86400).
+scopes
+string[]
+Limits 
+scopes
+ claim on the minted token. Optional; if omitted, the token inherits the caller's scope set.
+Response
+{
+ "token": "v4.public.eyJpc3MiOi...",
+ "expires_at": "2026-05-15T11:42:00Z"
+}
+Use the returned 
+token
+ as 
+Authorization: Bearer <token>
+ on subsequent calls.
+GET /v1/auth/whoami
+Identity introspection. Cheap healthcheck for "is my token still valid?"
+Response
+{
+ "caller": "user:alice",
+ "tenant_id": "acme",
+ "deployment_preset": "cloud_managed",
+ "token": {
+ "jti": "j_01HX...",
+ "iss": "https://idp.acme.com/realms/main",
+ "exp": 1763212929
+ },
+ "effective_capabilities": [
+ "scope.read.local",
+ "scope.read.holistic",
+ "scope.write",
+ "forget.cascade.derived_only"
+ ]
+}
+The 
+effective_capabilities
+ field is the intersection of the token's claimed 
+caps
+ and what the deployment + tenant + scope tiers allow. It's the authoritative answer to "what can this token do right now."
+POST /v1/auth/revoke
+Add a token JTI to the revocation list. Subsequent calls with that token return 
+401
+.
+{
+ "jti": "j_01HX...",
+ "reason": "Token leaked in support ticket #4421"
+}
+Returns 
+204
+. Revocation propagates across all server nodes within the configured cluster gossip interval (default 5 s).
+Error semantics
+HTTP
+error_code
+When
+401
+MISSING_TOKEN
+No 
+Authorization
+ header on a non-public route
+401
+INVALID_TOKEN_SIGNATURE
+Token didn't verify against any registered issuer
+401
+TOKEN_EXPIRED
+Token 
+exp
+ is in the past
+401
+actor_mismatch
+X-Cortex-Actor
+ doesn't match the token's 
+sub
+401
+WRONG_TENANT
+Token's 
+aud
+ doesn't match the deployment's tenant binding
+403
+policy_denied
+Token verified but missing the required capability — response cites tier + capability

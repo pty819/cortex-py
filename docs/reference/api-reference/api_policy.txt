@@ -1,0 +1,181 @@
+Policy - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Inspect deployment policy and the effective capability matrix for an actor + scope.
+Policy
+CortexDB's authorization stack is four-tiered: 
+deployment → tenant → scope → actor
+. Read-only inspection endpoints are stable; mutation endpoints (
+PUT /v1/policy/...
+) are experimental.
+For the capability catalog and tier semantics, see 
+Authorization
+.
+GET /v1/policy/deployment
+Returns the deployment-tier policy — the floor that no tenant or scope can override.
+Response
+{
+ "preset": "cloud_managed",
+ "allow": ["scope.read.*", "scope.write", "forget.cascade.derived_only"],
+ "deny": ["forget.gdpr.cross_workspace"],
+ "defaults": {
+ "diagnostics_allowed": false,
+ "experimental_enabled": false
+ }
+}
+Built-in presets: 
+on_prem_enterprise
+ (most permissive, experimentals enabled), 
+cloud_managed
+ (default), 
+cloud_strict
+ (GDPR cross-workspace denied by default), 
+dev_local
+ (unsigned tokens allowed).
+GET /v1/policy/effective
+The capability matrix for one actor at one scope, resolved through all four tiers.
+GET /v1/policy/effective?actor=user:alice&scope=org:acme/dept:eng/user:alice
+Response
+{
+ "allowed": [
+ { "capability": "scope.read.local", "tier": "scope", "reason": "scope.members[alice]=owner" },
+ { "capability": "scope.read.holistic", "tier": "tenant", "reason": "tenant policy" },
+ { "capability": "scope.write", "tier": "scope", "reason": "scope.members[alice]=owner" }
+ ],
+ "denied": [
+ { "capability": "forget.gdpr.cross_workspace", "tier": "deployment", "reason": "preset cloud_managed denies" }
+ ]
+}
+Every entry cites the 
+tier that decided
+ and a human-readable 
+reason
+. No opaque 403s.
+PUT /v1/policy/deployment / tenant / scope / actor — Experimental
+Mutate policy at each tier. Stability: 
+experimental
+ — the write surface is documented but the shape may change. Read endpoints above are stable.

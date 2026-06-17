@@ -1,0 +1,153 @@
+Entity Extraction - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Automatic entity and relationship extraction from ingested episodes.
+Entity Extraction
+CortexDB automatically extracts entities and relationships from ingested episodes. Extraction runs asynchronously -- it does not block the write path.
+What Gets Extracted
+Named entities:
+ People, organizations, technologies, services, projects, features
+Relationships:
+ How entities relate (owns, uses, depends_on, caused, etc.)
+Entity types:
+ Categorization into predefined and discovered types
+Aliases:
+ Different names for the same entity are resolved (e.g., "Bob", "
+[email protected]
+", "Robert")
+Configuration
+Control entity extraction through environment variables:
+Variable
+Default
+Description
+CORTEX_EXTRACTION_ENABLED
+true
+Enable/disable extraction
+Extraction Quality
+For best results, provide well-structured episode content with clear entity mentions. CortexDB uses LLM-based extraction to identify entities and relationships from natural language.
+Note
+If the extraction service is temporarily unavailable, episodes are still ingested and searchable. Extraction will catch up when the service recovers.

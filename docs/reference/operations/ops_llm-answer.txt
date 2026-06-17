@@ -1,0 +1,457 @@
+LLM & Answer Generation - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+All 18 LLM-related env vars — entity extraction, async enrichment, answer generation, verifier — plus how the fallback chain works.
+LLM & Answer Generation
+CortexDB calls LLMs in four distinct places, each independently configurable. Mixing them is the norm — for example: GPT-4o-mini for cheap entity extraction on every write, Claude Opus for the actual answer the user sees, an optional GPT-4.1 verifier on top.
+The four LLM call sites
+Call site
+When
+Default model
+Why this one
+Entity extraction
+On every write (sync) and during async fact emission
+gpt-4o-mini
+Cheap, fast, structured-output-reliable
+Async enrichment
+Background job, only if explicitly enabled
+(none — disabled)
+Heavyweight KG enrichment; opt-in
+Answer generation
+/v1/answer
+ endpoint
+claude-opus-4-6
+Highest score on multi-session in our A/B
+Verifier
+Optional, post-answer cross-check
+gpt-4.1
+Different family from the answer model → catches model-specific failure modes
+Each of these has its own model, URL, API key, and disable switch — so you can route them to entirely different providers if you need to.
+1. Entity extraction LLM
+Runs synchronously on 
+/v1/experience
+ to build the knowledge-graph seed. If disabled, fact/belief layers degrade to text-only matching.
+Env var
+Default
+What it controls
+CORTEX_LLM_DISABLE
+(unset)
+Set to 
+1
+ / 
+true
+ to skip extraction entirely. Faster writes; weaker recall.
+CORTEX_LLM_URL
+https://api.openai.com/v1
+Endpoint. Use any OpenAI-compatible API.
+CORTEX_LLM_MODEL
+gpt-4o-mini
+Model name passed to the provider.
+CORTEX_ENTITY_API_KEY
+(falls back to 
+OPENAI_API_KEY
+)
+Separate key — useful if you want extraction billed to a different budget.
+The extraction job is wrapped in a fallback chain (see 
+LlmConfig
+ below) so a primary failure auto-fails-over to your declared fallback model.
+When to change:
+CORTEX_LLM_DISABLE=1
+ for benchmarks where you want pure-text recall behavior.
+CORTEX_LLM_MODEL=gpt-4o
+ (not -mini) if you're seeing systematic extraction errors on your domain text. ~10× cost; usually unnecessary.
+CORTEX_LLM_URL=http://localhost:11434/v1
+ + 
+CORTEX_LLM_MODEL=qwen2.5:7b
+ to keep extraction local via Ollama.
+2. Async enrichment LLM (optional)
+A heavyweight, slower pipeline that does deeper KG enrichment (multi-hop fact linking, entity disambiguation across sessions). 
+Off by default
+ — set the model env var to turn it on.
+Env var
+Default
+What it controls
+CORTEX_ENRICHMENT_MODEL
+(empty = disabled)
+Set to a model name to enable.
+CORTEX_ENRICHMENT_URL
+(falls back to 
+CORTEX_LLM_URL
+)
+Endpoint.
+CORTEX_ENRICHMENT_API_KEY
+(falls back to 
+CORTEX_ENTITY_API_KEY
+)
+Separate key.
+When to enable:
+ if you have multi-session workloads where entity resolution across conversations matters more than ingest cost (CRM, customer history). The async pipeline picks up backlog over the scheduler's 
+enrichment_drain_interval_secs
+ (default 30 s).
+# Enable enrichment with a stronger model than the sync extractor
+export CORTEX_ENRICHMENT_MODEL=gpt-4o
+export CORTEX_ENRICHMENT_URL=https://api.openai.com/v1
+3. Answer generation LLM
+Used by 
+POST /v1/answer
+ to turn a recall pack into a cited natural-language answer.
+Env var
+Default
+What it controls
+CORTEX_ANSWER_PROVIDER
+anthropic
+anthropic
+, 
+openai
+, 
+google
+, 
+bedrock
+, 
+ollama
+CORTEX_ANSWER_MODEL
+claude-opus-4-6
+Model name. Provider-specific.
+CORTEX_ANSWER_URL
+(provider default)
+Override endpoint (proxies, gateways).
+CORTEX_ANSWER_API_KEY
+(falls back to provider-specific env)
+ANTHROPIC_API_KEY
+ for Anthropic, 
+OPENAI_API_KEY
+ for OpenAI, etc.
+CORTEX_ANSWER_MAX_TOKENS
+1500
+Generation budget. Higher = longer answers, more cost.
+ANTHROPIC_API_KEY
+(none)
+Fallback when provider is 
+anthropic
+ and 
+CORTEX_ANSWER_API_KEY
+ unset.
+The 93.8% LongMemEval-S number was produced with 
+claude-opus-4-6
+.
+ That benchmark is the strongest evidence we have on model choice — switching answer models is the highest-leverage change you can make.
+Model
+Provider
+Per-query cost
+LongMemEval-S delta vs Opus 4.6
+claude-opus-4-6
+Anthropic
+~$0.03
+0 (baseline, 93.8%)
+claude-sonnet-4-6
+Anthropic
+~$0.006
+~-2 pp
+gpt-4o
+OpenAI
+~$0.015
+~-3 pp
+gpt-4o-mini
+OpenAI
+~$0.001
+~-8 pp
+gemini-2.0-flash
+Google
+~$0.002
+~-5 pp (estimated; not formally A/B'd)
+The deltas are our internal A/B numbers on a 150-question slice; treat them as directional, not definitive. The cost-vs-accuracy frontier puts Sonnet at a very reasonable spot if Opus is too expensive.
+Provider-specific notes
+Anthropic:
+ Defaults to 
+claude-opus-4-6
+. Set 
+CORTEX_ANSWER_URL
+ to a Bedrock or Vertex AI endpoint to route through a cloud provider's hosted Claude.
+OpenAI:
+ Set 
+CORTEX_ANSWER_PROVIDER=openai
+, 
+CORTEX_ANSWER_MODEL=gpt-4o
+. The default 
+CORTEX_ANSWER_URL
+ becomes 
+https://api.openai.com/v1
+.
+Bedrock / Google:
+ Set 
+CORTEX_ANSWER_URL
+ to the regional endpoint. Authentication uses the provider's native env vars (
+AWS_ACCESS_KEY_ID
+ etc. for Bedrock).
+Ollama:
+ Set 
+CORTEX_ANSWER_PROVIDER=ollama
+, 
+CORTEX_ANSWER_URL=http://localhost:11434
+, 
+CORTEX_ANSWER_MODEL=qwen2.5:14b
+. Local inference; ~3-15 s / answer depending on hardware and model size.
+4. Verifier LLM (optional, off by default)
+A second LLM call that critiques the answer for hallucination against the citation pack. Catches "model said X but the cited source said Y" failures. Doubles latency and cost when enabled.
+Env var
+Default
+What it controls
+CORTEX_ANSWER_USE_VERIFIER
+(unset)
+Legacy enable flag. Overridden by 
+CORTEX_ANSWER_VERIFIER_TYPES
+ if both are set.
+CORTEX_ANSWER_VERIFIER_TYPES
+(empty)
+Comma-separated question types where the verifier runs.
+CORTEX_VERIFIER_MODEL
+gpt-4.1
+Verifier model. Use a 
+different family
+ from the answer model.
+CORTEX_VERIFIER_URL
+(falls back to 
+CORTEX_ANSWER_URL
+)
+Endpoint.
+CORTEX_VERIFIER_API_KEY
+(falls back to 
+CORTEX_ANSWER_API_KEY
+)
+Key.
+CORTEX_VERIFIER_MAX_TOKENS
+16384
+Verifier output budget. Generous default — verifier can be verbose.
+Question types are: 
+single-session-user
+, 
+single-session-assistant
+, 
+multi-session
+, 
+open-domain
+. Enable selectively where false-confidence is most expensive:
+# Verify only multi-session and open-domain answers (where the failure rate is highest)
+export CORTEX_ANSWER_VERIFIER_TYPES=multi-session,open-domain
+export CORTEX_VERIFIER_MODEL=gpt-4.1
+Why a different family:
+ if the verifier is the same model as the generator, it tends to share the generator's blind spots. We default to GPT-4.1 as a verifier for Claude-Opus answers and vice-versa.
+The fallback chain (in cortex.toml)
+The 
+[llm]
+ section of 
+cortex.toml
+ declares a fallback chain that any LLM call (extraction or answer) can use when the primary provider is unreachable:
+[llm]
+provider = "openai"
+endpoint = "" # empty → resolve from provider default
+api_key = "" # empty → resolve from OPENAI_API_KEY env
+model = "gpt-4o-mini"
+fallback_provider = "anthropic"
+fallback_endpoint = "" # empty → https://api.anthropic.com/v1
+fallback_api_key = "" # empty → ANTHROPIC_API_KEY env
+fallback_model = "claude-sonnet-4-6"
+fallback_chain = ["openai", "anthropic", "google"] # tried in order on cascading failures
+max_extraction_batch_size = 8 # entity-extraction items per LLM call
+extraction_timeout_ms = 30000 # per-call timeout
+Resolution semantics:
+If 
+api_key
+ is set in TOML, use it. Else, look up the env var for the named provider (
+OPENAI_API_KEY
+ for openai, 
+ANTHROPIC_API_KEY
+ for anthropic, 
+LLM_API_KEY
+ for anything else).
+Same pattern for 
+endpoint
+: TOML field wins, else use the provider's canonical default.
+Env-var 
+CORTEX_*
+ overrides at the call-site level take precedence over the TOML defaults — the TOML chain is a 
+floor
+, the env vars are the 
+ceiling
+.
+Cost ladder
+Sample monthly cost for an agent that writes 10 K events/day and answers 1 K queries/day:
+Configuration
+Embedding
+Extraction
+Answer
+Verifier
+Total
+Cost-Optimized (all GPT-4o-mini)
+$5
+$8
+$10
+—
+$23
+Default (sm embed + 4o-mini ext + Opus ans)
+$5
+$8
+$90
+—
+$103
+With verifier on multi-session
+$5
+$8
+$90
+$30
+$133
+Premium (lg embed + 4o ext + Opus + Verifier)
+$20
+$80
+$90
+$30
+$220
+The Opus answer call dominates; cutting it is the largest available cost lever. Sonnet (~$18/mo at the same volume) is the right swap for cost-sensitive deployments that still want a strong answer model.
+Diagnostics
+Every authenticated 
+/v1/answer
+ response includes the model that produced it:
+{
+ "answer": "...",
+ "citations": [...],
+ "model_used": "claude-opus-4-6"
+}
+If 
+model_used
+ doesn't match what you set, one of:
+Your env var has a typo and the binary fell back to the compiled default.
+The fallback chain triggered (primary provider was unreachable).
+A scope-level policy override is forcing a different model. Check 
+/v1/policy/effective?actor=...
+.
+Next steps
+Embeddings
+ — the vector side of the inference bill
+Recall Tuning
+ — how to feed the answer model better context
+Profiles & Presets
+ — see the Cost-Optimized profile for an all-mini deployment

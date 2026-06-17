@@ -1,0 +1,192 @@
+Blobs - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Upload and retrieve raw binary content (images, audio, PDFs).
+Blobs
+Blobs are content-addressed binary objects. Reference them from an experience envelope via 
+content.kind = "blob_ref"
+ or as 
+media[].blob_id
+ inside a message.
+Content negotiation
+Blob endpoints use 
+Content-Type
+ to describe the request body (on upload) and the response body (on download). They do 
+not
+ look at 
+Accept
+. Concretely:
+Upload (
+POST /v1/blobs
+):
+ send the bytes raw with 
+Content-Type: <mime>
+. Do 
+not
+ wrap them in JSON / multipart / base64 — the body is the file. The server stores the declared MIME alongside the bytes.
+Download (
+GET /v1/blobs/{id}
+):
+ the response 
+Content-Type
+ echoes whatever was declared at upload. 
+Accept
+ headers are ignored — there is no transcoding. If you uploaded 
+image/png
+, you always get 
+image/png
+ back.
+POST /v1/blobs
+ with a JSON-or-multipart body returns 
+415 
+unsupported_media_type
+.
+POST /v1/blobs
+Upload a blob.
+POST /v1/blobs
+Content-Type: image/png
+Content-Length: 245892
+<binary bytes>
+Response
+{
+ "blob_id": "blob_01HX...",
+ "size_bytes": 245892,
+ "content_type": "image/png",
+ "sha256": "..."
+}
+Blobs are content-deduplicated by SHA-256 — uploading the same bytes twice returns the same 
+blob_id
+ cheaply.
+GET /v1/blobs/
+Returns the raw bytes with the original 
+Content-Type
+. Auth checked at the scope of the calling experience (a blob with no referencing experience is accessible only to the original uploader).
+HTTP/1.1 200 OK
+Content-Type: image/png
+Content-Disposition: inline; filename="architecture-diagram.png"
+Content-Length: 245892
+<binary bytes>

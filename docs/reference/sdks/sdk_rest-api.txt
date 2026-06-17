@@ -1,0 +1,356 @@
+REST API - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Direct HTTP examples for the CortexDB v1 surface.
+REST API
+CortexDB exposes a v1 REST API. Every endpoint accepts and returns JSON unless noted (
+/v1/blobs
+ is binary; SSE endpoints are 
+text/event-stream
+). The base URL for the public cloud is 
+https://api-v1.cortexdb.ai
+; self-hosted defaults are at 
+http://localhost:3141
+.
+For full endpoint shapes and field-by-field reference, browse the 
+API Reference
+ section.
+30-second cold start
+The shortest copy-paste path from "I have nothing" to "I stored and recalled a memory" — anonymous signup, no email or card:
+# 1. Mint a free-tier token (returns token + user_id + scope + 7-day expiry)
+SIGNUP=$(curl -sfS -X POST https://api-v1.cortexdb.ai/v1/auth/signup \
+ -H 'Content-Type: application/json' -d '{}')
+export CORTEX_TOKEN=$(echo "$SIGNUP" | jq -r .token)
+export CORTEX_ACTOR=$(echo "$SIGNUP" | jq -r .user_id)
+export CORTEX_SCOPE=$(echo "$SIGNUP" | jq -r .scope)
+# 2. Store a memory
+curl -sfS -X POST https://api-v1.cortexdb.ai/v1/experience \
+ -H "Authorization: Bearer $CORTEX_TOKEN" \
+ -H "X-Cortex-Actor: $CORTEX_ACTOR" \
+ -H 'Content-Type: application/json' \
+ -d "{
+ \"scope\": \"$CORTEX_SCOPE\",
+ \"modality\": \"conversation\",
+ \"content\": { \"kind\": \"message\", \"role\": \"user\",
+ \"text\": \"Q3 revenue exceeded \$2.4M, up 34% YoY\" },
+ \"context\": { \"observed_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" },
+ \"idempotency_key\": \"cold-start-001\"
+ }"
+# 3. Ask a question (uses the LLM-backed answer endpoint — citations included)
+curl -sfS -X POST https://api-v1.cortexdb.ai/v1/answer \
+ -H "Authorization: Bearer $CORTEX_TOKEN" \
+ -H "X-Cortex-Actor: $CORTEX_ACTOR" \
+ -H 'Content-Type: application/json' \
+ -d "{ \"scope\": \"$CORTEX_SCOPE\", \"question\": \"What was Q3 revenue?\",
+ \"view\": \"holistic\", \"diagnostics\": \"none\" }"
+Every authenticated response carries 
+X-RateLimit-Limit
+, 
+X-RateLimit-Reset
+, 
+X-Cortex-Token-Expires-In
+, and 
+X-Cortex-Token-Expires-At
+ — surface them in your client to back off and refresh ahead of expiry. The free-tier token TTL is 7 days; re-sign-up to mint another, or use 
+POST /v1/auth/tokens
+ once you have an account with the 
+auth.mint
+ capability.
+Authentication
+Every authenticated request requires a 
+PASETO v4 public token
+ plus the 
+X-Cortex-Actor
+ header:
+curl https://api-v1.cortexdb.ai/v1/auth/whoami \
+ -H "Authorization: Bearer $CORTEX_TOKEN" \
+ -H "X-Cortex-Actor: user:alice"
+X-Cortex-Actor
+ must match the token's 
+sub
+ claim — otherwise the server returns 
+401 
+actor_mismatch
+.
+Three ways to get a token (full decision table at 
+/docs/concepts/authorization
+):
+You want to…
+Endpoint
+Notes
+Try the API in 60 seconds
+POST /v1/auth/signup
+Anonymous, free-tier, 7-day TTL. No email or card. Used in the cold-start above.
+Run a service account
+POST /v1/auth/tokens
+Requires 
+auth.mint
+ capability. 1–24h TTL.
+Use your own IdP in production
+Register your signing key with CortexDB
+Your IdP mints PASETO; CortexDB verifies.
+Base URL
+Environment
+URL
+Cloud (recommended)
+https://api-v1.cortexdb.ai
+Cloud (legacy alias)
+https://api-v1.cortexdb.ai
+ — both currently work; prefer 
+api-v1
+ in code
+Self-hosted
+http://localhost:3141
+Identity check
+curl https://api-v1.cortexdb.ai/v1/auth/whoami \
+ -H "Authorization: Bearer $CORTEX_TOKEN" \
+ -H "X-Cortex-Actor: user:alice"
+Capture an experience
+curl -X POST https://api-v1.cortexdb.ai/v1/experience \
+ -H "Authorization: Bearer $CORTEX_TOKEN" \
+ -H "X-Cortex-Actor: user:alice" \
+ -H "Content-Type: application/json" \
+ -d '{
+ "scope": "org:acme/dept:eng/user:alice",
+ "modality": "conversation",
+ "content": {
+ "kind": "message",
+ "role": "user",
+ "text": "Just got off a call with Priya at Acme."
+ },
+ "context": { "observed_at": "2026-05-15T10:42:00Z" },
+ "idempotency_key": "alice-chat-001"
+ }'
+Returns 
+202 Accepted
+ with 
+event_id
+ and a 
+lifecycle_stream
+ URL. Pass 
+?wait=indexed
+ (or 
+captured
+ / 
+consolidated
+) to block until that stage completes (returns 
+200
+).
+Recall a stratified pack
+curl -X POST https://api-v1.cortexdb.ai/v1/recall \
+ -H "Authorization: Bearer $CORTEX_TOKEN" \
+ -H "X-Cortex-Actor: user:alice" \
+ -H "Content-Type: application/json" \
+ -d '{
+ "scope": "org:acme/dept:eng/user:alice",
+ "view": "holistic",
+ "query": "What did we decide about the Q3 launch?",
+ "include": ["beliefs", "facts", "episodes"],
+ "budgets": { "max_tokens": 4000 },
+ "citation_mode": "inline_with_markers"
+ }'
+Recall + LLM answer
+curl -X POST https://api-v1.cortexdb.ai/v1/answer \
+ -H "Authorization: Bearer $CORTEX_TOKEN" \
+ -H "X-Cortex-Actor: user:alice" \
+ -H "Content-Type: application/json" \
+ -d '{
+ "scope": "org:acme/dept:eng/user:alice",
+ "view": "holistic",
+ "question": "Did Acme renew?",
+ "answer_model": "claude-opus-4-6",
+ "temporal": { "natural": "last 30 days" }
+ }'
+Layer reads
+# Events
+curl "https://api-v1.cortexdb.ai/v1/events?scope=org:acme/dept:eng/user:alice&since=2026-04-01T00:00:00Z" \
+ -H "Authorization: Bearer $CORTEX_TOKEN" \
+ -H "X-Cortex-Actor: user:alice"
+# Facts (with bi-temporal as_of)
+curl "https://api-v1.cortexdb.ai/v1/facts?scope=org:acme/dept:eng&subject=ent_acme_corp&predicate=deal_stage&as_of=2026-04-15T00:00:00Z" \
+ -H "Authorization: Bearer $CORTEX_TOKEN" \
+ -H "X-Cortex-Actor: user:alice"
+# Fact timeline (supersession chain)
+curl "https://api-v1.cortexdb.ai/v1/facts/timeline?scope=org:acme/dept:eng&subject=ent_acme_corp&predicate=deal_stage" \
+ -H "Authorization: Bearer $CORTEX_TOKEN" \
+ -H "X-Cortex-Actor: user:alice"
+# Beliefs + why
+curl "https://api-v1.cortexdb.ai/v1/beliefs?scope=org:acme/dept:eng&about=ent_acme_corp" \
+ -H "Authorization: Bearer $CORTEX_TOKEN" -H "X-Cortex-Actor: user:alice"
+curl "https://api-v1.cortexdb.ai/v1/beliefs/why?belief_id=belief_01HX..." \
+ -H "Authorization: Bearer $CORTEX_TOKEN" -H "X-Cortex-Actor: user:alice"
+Selective forget
+curl -X POST https://api-v1.cortexdb.ai/v1/forget \
+ -H "Authorization: Bearer $CORTEX_TOKEN" \
+ -H "X-Cortex-Actor: user:alice" \
+ -H "Content-Type: application/json" \
+ -d '{
+ "scope": "org:acme/dept:eng/user:alice",
+ "layers": ["beliefs"],
+ "selector": { "predicate": "is_likely_to_renew" },
+ "cascade": "derived_only",
+ "audit_note": "User retracted speculation"
+ }'
+GDPR erasure (preview → execute)
+# Preview
+curl -X POST https://api-v1.cortexdb.ai/v1/erasures/preview \
+ -H "Authorization: Bearer $CORTEX_TOKEN" \
+ -H "X-Cortex-Actor: user:alice" \
+ -H "Content-Type: application/json" \
+ -d '{ "scope": "org:acme/user:alice", "audit_note": "DSR #1234 — preview" }'
+# Execute (always 202)
+curl -X POST https://api-v1.cortexdb.ai/v1/erasures \
+ -H "Authorization: Bearer $CORTEX_TOKEN" \
+ -H "X-Cortex-Actor: user:alice" \
+ -H "Content-Type: application/json" \
+ -d '{
+ "scope": "org:acme/user:alice",
+ "from_preview_id": "ervw_01HX...",
+ "idempotency_key": "erasure-dsr-1234",
+ "audit_note": "DSR #1234"
+ }'
+Lifecycle stream (SSE)
+curl -N https://api-v1.cortexdb.ai/v1/lifecycle/stream?scope=org:acme/dept:eng \
+ -H "Authorization: Bearer $CORTEX_TOKEN" \
+ -H "X-Cortex-Actor: user:alice" \
+ -H "Accept: text/event-stream"
+Use the 
+Last-Event-ID
+ header on reconnect to resume from where you left off.
+Capability matrix lookup
+curl "https://api-v1.cortexdb.ai/v1/policy/effective?actor=user:alice&scope=org:acme/dept:eng/user:alice" \
+ -H "Authorization: Bearer $CORTEX_TOKEN" \
+ -H "X-Cortex-Actor: user:alice"
+Every entry cites the 
+tier that decided
+ and a 
+reason
+ — no opaque 403s.
+Health
+curl https://api-v1.cortexdb.ai/v1/admin/health
+# {"status":"healthy","storage":"ok","version":"1.0.0-rc1","uptime_secs":5104320}
+(Unauthenticated.)

@@ -1,0 +1,302 @@
+TypeScript SDK - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+Reference for cortexdbai v1 — V1Client and typed errors.
+TypeScript SDK
+The official TypeScript / JavaScript client for CortexDB v1. Single 
+V1Client
+ class, isomorphic (Node + browser).
+npm install cortexdbai
+Requires Node 18+ or any runtime with 
+fetch
+ + 
+AbortController
+. Module: 
+cortexdbai/v1
+.
+cortexdbai
+, not 
+cortexdb
+.
+ An unrelated SQL-database client owns the bare 
+cortexdb
+ name on npm — installing that breaks in confusing ways. Always 
+cortexdbai
+.
+The one-liner: 
+V1Client.signup()
+The shortest path from 
+npm install
+ to stored-and-retrieved memory:
+import { V1Client } from "cortexdbai/v1";
+const client = await V1Client.signup();
+await client.experience(client.actor, {
+ text: "hello memory",
+ observedAt: new Date().toISOString(),
+ idempotencyKey: "first-001",
+});
+const pack = await client.recall(client.actor, {
+ query: "hello",
+ diagnostics: "none",
+});
+signup()
+ posts to 
+/v1/auth/signup
+, gets a token/actor/scope, and returns a fully-wired client. Free tier — 7-day TTL, no email, no card.
+Explicit construction
+import { V1Client } from "cortexdbai/v1";
+const client = new V1Client({
+ apiUrl: "https://api-v1.cortexdb.ai",
+ actor: "user:alice",
+ bearer: process.env.CORTEX_TOKEN!,
+ timeoutMs: 30_000,
+});
+Option
+Default
+Notes
+apiUrl
+— (required)
+v1 surface URL
+actor
+— (required)
+Sent as 
+X-Cortex-Actor
+; must match the token's 
+sub
+bearer
+undefined
+PASETO v4 public token. Optional in 
+dev_local
+timeoutMs
+30000
+Per-request timeout
+fetch
+globalThis.fetch
+Override for tracing / retries / custom transport
+Auth
+const me = await client.whoami();
+// → { caller, tenant_id, deployment_preset, effective_capabilities, token }
+const minted = await client.mintToken({
+ subject: "user:alice",
+ ttlSeconds: 3600,
+ scopes: ["org:acme/user:alice"],
+});
+// → { token: "v4.public...", expires_at: "2026-05-15T11:42:00Z" }
+Write path
+const r = await client.experience(
+ "org:acme/user:alice",
+ {
+ modality: "conversation",
+ content: { kind: "message", role: "user", text: "Acme upgraded to 200 seats." },
+ context: { observed_at: "2026-05-15T10:42:00Z" },
+ idempotency_key: "alice-chat-001",
+ },
+ { wait: "indexed" }, // optional: "captured" | "indexed" | "consolidated"
+);
+const bulk = await client.experienceBulk(
+ "org:acme/user:alice",
+ [
+ { modality: "conversation", content: { ... }, context: { ... }, idempotency_key: "k1" },
+ { modality: "conversation", content: { ... }, context: { ... }, idempotency_key: "k2" },
+ ],
+ { ordering: "strict_temporal" },
+);
+For full envelope shape see 
+Experience Envelope
+.
+Read path
+const pack = await client.recall("org:acme/user:alice", {
+ view: "holistic",
+ query: "What did we decide about Acme?",
+ include: ["beliefs", "facts", "episodes"],
+ budgets: { max_tokens: 4000 },
+ temporal:{ natural: "last 30 days" },
+});
+// pack is a fully-typed StratifiedPack
+const ans = await client.answer("org:acme/user:alice", {
+ question: "Did Acme renew?",
+ view: "holistic",
+ answer_model: "claude-opus-4-6",
+ temporal: { natural: "last 30 days" },
+});
+// ans is a fully-typed AnswerResponse
+Layer reads
+await client.events("org:acme/user:alice", { view: "local", limit: 50 });
+await client.episodes("org:acme/user:alice", "local");
+await client.facts("org:acme/user:alice");
+await client.beliefs("org:acme/user:alice");
+await client.beliefWhy("belief_01HX...");
+await client.understanding("org:acme/user:alice");
+await client.buildEpisodes("org:acme/user:alice");
+await client.buildBeliefs("org:acme/user:alice");
+await client.synthesize("org:acme/dept:eng", ["sales_process"]);
+Forget
+await client.forget("org:acme/user:alice", {
+ layers: ["beliefs"],
+ selector: { predicate: "is_likely_to_renew" },
+ cascade: "derived_only",
+ audit_note: "User retracted speculation",
+});
+Audit + Admin
+await client.audit({ actor: "user:alice", capability: "forget.gdpr", limit: 100 });
+await client.layerStats(); // experimental
+Typed errors
+import {
+ V1Error,
+ V1AuthError,
+ V1PolicyDeniedError,
+ V1RateLimitError,
+ V1NotConfiguredError,
+ V1ConnectionError,
+ V1TimeoutError,
+} from "cortexdbai/v1";
+try {
+ await client.experience("org:acme/user:alice", { ... });
+} catch (e) {
+ if (e instanceof V1PolicyDeniedError) {
+ console.error(`denied by ${e.tier}: ${e.capability}`);
+ } else if (e instanceof V1RateLimitError) {
+ await new Promise(r => setTimeout(r, 1000));
+ } else {
+ throw e;
+ }
+}
+Types
+The SDK exports the full type set used by the v1 surface:
+import type {
+ StratifiedPack,
+ AnswerResponse,
+ ExperienceItem,
+ RecallParams,
+ AnswerParams,
+ ForgetParams,
+ Citation,
+ Provenance,
+ Diagnostics,
+} from "cortexdbai/v1";
+tsc --noEmit
+ reports zero errors in the v1 surface — the SDK is suitable for strict TypeScript projects.

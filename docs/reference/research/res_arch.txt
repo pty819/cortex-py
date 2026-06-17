@@ -1,0 +1,511 @@
+CortexDB v1 Architecture: The Experience Layer for AI Agents - CortexDB Docs
+Cortex
+DB
+Docs
+Getting Started
+Introduction
+Python Quickstart
+TypeScript Quickstart
+Core Concepts
+The Five Memory Layers
+Scopes
+Bi-temporal Model
+The Experience Envelope
+Lifecycle & Async Writes
+Authorization
+Event Sourcing
+Knowledge Graph
+Hybrid Retrieval
+Platform Features
+Graph Memory
+Temporal Queries
+Entity Extraction
+Memory Evolution
+Export & Import
+SDKs
+Python
+TypeScript
+CLI
+REST API
+MCP Server
+Agent Frameworks
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AG2 (AutoGen)
+AutoGen
+Agno
+DSPy
+Smolagents
+CAMEL-AI
+PydanticAI
+Mastra
+OpenAI Agents
+Google ADK
+Letta
+BeeAI
+NeMo Guardrails
+Instructor
+ControlFlow
+Eliza OS
+Hermes
+OpenClaw
+Orchestration
+Temporal
+n8n
+Prefect
+Airflow
+Zapier
+Make.com
+No-Code Platforms
+Vercel AI SDK
+Flowise
+Dify
+LLM Providers
+Ollama
+Groq
+Together AI
+Fireworks AI
+vLLM
+DeepInfra
+Connectors
+Slack
+GitHub
+GitLab
+Jira
+Linear
+Confluence
+Notion
+PagerDuty
+Discord
+Microsoft Teams
+Google Workspace
+Salesforce
+HubSpot
+Zendesk
+Intercom
+ServiceNow
+API Reference
+POST /v1/experience
+POST /v1/recall
+POST /v1/answer
+POST /v1/forget
+Erasures (GDPR)
+GET /v1/events
+Episodes
+Facts
+Beliefs
+Understanding
+Scopes
+Lifecycle
+Audit
+Import
+Export
+Blobs
+Vocabularies
+Temporal Phrases
+Auth
+Policy
+Admin
+Enterprise
+Security
+Audit Trail
+Operations
+Overview
+Configuration Foundations
+Profiles & Presets
+Embeddings
+LLM & Answer Generation
+Recall Tuning
+Storage & Cluster
+Security & Compliance
+Benchmarking
+Research
+Benchmark Paper
+Architecture Whitepaper
+← Back to cortexdb.ai
+How CortexDB v1 stores, derives, and serves long-term memory — five layers, bi-temporal records, hierarchical scopes, capability-based auth, and an asynchronous lifecycle from event capture through synthesis.
+CortexDB v1 Architecture: The Experience Layer for AI Agents
+Abstract
+CortexDB v1 is a long-term memory system for AI agents and assistants. It treats every interaction, document, event, or observation as an immutable 
+experience
+ appended to a write-ahead log, then asynchronously derives five layered views — Events, Episodes, Facts, Beliefs, Understanding — that recall and answer endpoints query against. Every record is 
+bi-temporal
+ (carries both 
+when it was true
+ and 
+when we learned about it
+). Every request is scoped to a hierarchical path (
+org:acme/dept:eng/user:alice
+) and gated by a four-tier capability stack with PASETO v4 public-token identity. This paper walks through the architecture as deployed in v1: the surface, the storage, the lifecycle, the auth model, and the explicit trade-offs.
+1. Design constraints
+CortexDB v1 was designed against five constraints that emerged from a year of building AI-agent memory in production:
+No information loss on the write path.
+ Once an event is captured, the original bytes are retained verbatim. Summarization, deduplication, and structuring happen downstream and can be re-run. A future retrieval should not be blocked by a past extractor's judgement call.
+Bi-temporal correctness.
+ The system must answer both "what is true now" and "what did we know at 02:14 yesterday." A flat current-state store cannot.
+Scope as a first-class concept.
+ Multi-tenant SaaS, multi-user workspaces, and multi-agent organizations all reduce to the same primitive: a hierarchical path with explicit ancestor/descendant semantics for both reads and policy.
+Capability-based authorization.
+ Every denial cites the tier that decided and the specific capability that was missing — no opaque 403s.
+Async-by-default but synchronously-completable.
+ Writes return 202 in under 10 ms; clients that need to wait for indexing/consolidation can opt in (
+wait=indexed
+) without changing the write shape.
+The rest of this paper describes the architecture those constraints produced.
+2. The surface
+The v1 HTTP surface is intentionally small. The five endpoints below are the entire daily-driver API for any client:
+POST /v1/auth/signup anonymous, public — mints a free-tier PASETO
+POST /v1/experience append an experience (the only write)
+POST /v1/recall return a StratifiedPack (retrieval)
+POST /v1/answer recall + LLM answer + citations
+POST /v1/forget delete with an audit note (selective or GDPR)
+Layer-direct read endpoints — 
+/v1/events
+, 
+/v1/episodes
+, 
+/v1/facts
+, 
+/v1/beliefs
+, 
+/v1/understanding
+ — exist for inspection and debugging but are usually not what an agent calls; 
+/v1/recall
+ is the standard read path because it merges across layers.
+Identity uses 
+PASETO v4 public
+ tokens (Ed25519-signed JWT cousins; no symmetric secrets in the verifier). Every request carries 
+Authorization: Bearer <token>
+ and 
+X-Cortex-Actor: <id>
+. The actor must equal the token's 
+sub
+ claim; mismatches return 401 
+actor_mismatch
+. Free-tier identities are mintable anonymously in one POST.
+3. The five layers
+CortexDB derives five layers from the same source of truth. Each is queryable in isolation; each is also folded into recall.
+Layer Built by Stored as Latency
+──────────────── ───────────────────── ─────────────────────────────── ─────────
+Events sync write WAL (append-only) <10 ms
+Episodes segmenter RocksDB + secondary index seconds
+Facts LLM extractor Typed FactStore (bi-temporal) ~5-30 s
+Beliefs aggregator Confidence-weighted store ~minutes
+Understanding LLM synthesizer Concept store (per topic) ~minutes-hours
+3.1 Events
+The Events layer is the WAL. Every 
+POST /v1/experience
+ becomes one immutable event:
+{
+ "event_id": "evt_019e30f4...",
+ "scope": "org:acme/dept:eng/user:alice",
+ "modality": "conversation",
+ "content": { "kind": "message", "role": "user", "text": "..." },
+ "context": { "observed_at": "2026-05-15T10:42:00Z", "labels": [...] },
+ "observed_actor": { "id": "user:alice" }
+}
+Events are content-addressed by an idempotency key — re-submitting the same key replays the original 2xx response rather than creating a duplicate. The WAL is the system of record; every other layer can be rebuilt from it.
+3.2 Episodes
+The Episodes layer is the segmenter's output — chronologically contiguous spans of events that hang together as a single unit (a meeting, a thread, an incident). The segmenter runs on every WAL tick; episodes appear within seconds of the events that compose them.
+3.3 Facts
+The Facts layer is where extracted knowledge lives. The LLM extractor reads new events and emits subject/predicate/object triples:
+subject=ent_Acme predicate=upgraded object="200 seats"
+subject=ent_Acme predicate=renewed_arr object="$480k"
+subject=user:bob predicate=has_role object="VP Sales"
+Each fact carries 
+two time intervals
+:
+valid_from
+ / 
+valid_to
+ — when the fact is 
+true in the world
+.
+recorded_from
+ / 
+recorded_to
+ — when 
+the system knew about it
+.
+A question like "What was Bob's role on March 3rd?" hits a typed-store lookup on 
+valid_from <= 2026-03-03 < valid_until
+. A question like "What did we know about Bob's role as of yesterday?" hits the same store on 
+recorded_from
+. Both are direct lookups, not LLM judgements.
+The extractor is async: facts populate within ~5–30 seconds of the originating event. The Facts layer is the largest single contributor to CortexDB's benchmark scores (−22 pp on LongMemEval-S if disabled; see the 
+benchmark paper
+).
+3.4 Beliefs
+Beliefs aggregate facts into confidence-weighted higher-level claims. Where the Facts layer might hold:
+fact_1: Acme | renewed_arr | $480k (conf 0.62)
+fact_2: Acme | upgraded | 200 seats (conf 0.88)
+fact_3: Acme | csat | 4.7 (conf 0.55)
+the Beliefs layer might hold:
+belief_1: Acme | is_likely_to_renew_again | true (conf 0.81, supports=[f1,f2,f3])
+Beliefs are queryable directly (
+GET /v1/beliefs
+) and explainable (
+GET /v1/beliefs/why?belief_id=…
+ returns the supporting fact + event chain). The aggregator runs on the same scheduler tick that flushes facts; new beliefs appear within minutes.
+3.5 Understanding
+The Understanding layer is the synthesized concept layer. The synthesizer reads the Facts + Beliefs accumulated over a scope and produces named concepts, themes, and relationships:
+concept: "Q3 renewal motion"
+ summary: "Multi-touch renewal cycle starting with POC extension at quarter mark, …"
+ supports: [fact_01HX..., episode_01HY...]
+ related: [{ concept: "POC conversion", relation: "specializes" }]
+ confidence: 0.74
+Understanding is the slowest layer — it calls an LLM (Claude Opus 4.6 by default) on a per-topic basis and may take minutes to hours for a fresh scope. It's also where most of the read-side cost lives, so the capability is gated by 
+understanding.synthesize
+ and denied on the free tier by default.
+4. The five-stage lifecycle
+Every experience flows through five stages. Clients can subscribe to stage transitions via 
+GET /v1/lifecycle/stream?event_id=…
+ (SSE).
+CAPTURE → POST /v1/experience returns 202 + event_id once WAL append commits.
+EXTRACT → LLM extractor pulls triples into Facts on next scheduler tick.
+RECONCILE → Conflicts ("Bob said yes Tuesday, no Friday") resolve under
+ bi-temporal supersession. Newest valid_from wins; older record's
+ valid_until set to the new one's valid_from.
+FORGET → Selective forget across derived layers (cascade=derived_only,
+ redact_events, or gdpr). Audited.
+CONSOLIDATE → Synthesizer builds Understanding concepts per topic per scope.
+ Off by default on free tier; opt-in via capability.
+The first stage is synchronous (the 202 means 
+the bytes are durable in the WAL
+). Stages 2–5 are async — clients that need to wait for a specific stage pass 
+?wait=indexed
+ (or 
+consolidated
+) to block on it.
+5. Bi-temporal storage
+Every record in every layer carries two time intervals:
+valid_from when the record is true in the world
+valid_to when it stops being true (open-ended until superseded)
+recorded_from when the system learned about it
+recorded_to when the system stopped believing it (open-ended)
+This shape supports four query modes from the same data:
+Now:
+valid_to IS NULL AND recorded_to IS NULL
+ — current state, current knowledge.
+As-of:
+valid_from <= $t < valid_to (or valid_to is null)
+ — what was true at time t.
+As-known:
+recorded_from <= $t < recorded_to (or recorded_to is null)
+ — what we believed at time t.
+History:
+ unbounded — the full supersession chain.
+All four are direct typed-store lookups (no LLM, no scan). Most "long-term memory for AI" systems do not store the 
+recorded_*
+ axis; they cannot answer "what did we believe at the time" — which matters for any post-incident review or audit.
+6. Scopes
+A scope is a hierarchical path with 
+:
+ segment separators:
+org:acme/dept:eng/team:platform/user:alice
+ user:bob
+ user:carol
+ team:product/user:dana
+ team:design/user:erin
+ dept:sales/user:fiona
+Scopes have three semantics:
+Addressing.
+ Every experience is written to one scope.
+Read semantics.
+view: holistic
+ traverses up the path (ancestors visible); 
+view: descend
+ traverses down (children visible); 
+view: local
+ only the named scope; 
+view: granular
+ the same but per-event-shape.
+Policy.
+ Capabilities can be granted at any node and inherit down the path. 
+scope.read.holistic
+ at 
+org:acme/dept:eng
+ means the actor can read at any descendant under engineering, but not under sales.
+Scopes replace the flat-tenant model entirely. There is no 
+tenant_id
+ field anywhere in the v1 envelope.
+7. The four-tier capability stack
+Authorization in v1 is capability-based with four tiers, evaluated outer-to-inner:
+1. Deployment policy ← preset-defined floor (cannot be overridden)
+2. Tenant policy ← per-tenant defaults
+3. Scope policy ← per-scope ACLs and members
+4. Actor policy ← per-actor overrides
+An 
+allow
+ at an inner tier can override an outer 
+allow
+ (be more specific). An 
+outer 
+deny
+ is final
+. The free-tier preset (
+cloud_shared_saas
+) grants the standard read/write capabilities and disallows 
+diagnostics.read
+, 
+auth.mint
+, and 
+forget.gdpr
+ by default.
+Denials are explicit:
+{
+ "error_code": "policy_denied",
+ "details": {
+ "capability": "forget.gdpr.cross_workspace",
+ "decided_by_tier": "deployment",
+ "reason": "preset cloud_shared_saas denies"
+ }
+}
+GET /v1/policy/effective?actor=<>&scope=<>
+ returns the full allow/deny matrix for any actor-scope pair, with the same tier+reason metadata for each capability.
+8. The auth model
+Three documented paths to a working PASETO token (full decision table at 
+/docs/concepts/authorization
+):
+Path
+Use case
+TTL
+POST /v1/auth/signup
+Anonymous, "try it in 60 seconds." No email, no card.
+7 days (free tier)
+POST /v1/auth/tokens
+Service accounts. Requires 
+auth.mint
+ capability.
+1–24 hours
+Bring your own IdP
+Production. Register your IdP's Ed25519 public key in the deployment's 
+IssuerRegistry
+; your IdP mints tokens, CortexDB verifies.
+Whatever your IdP issues
+The anonymous-signup path is the recommended quickstart for any new user. The token is full v1 (write, read, hybrid recall, LLM answer); only the four advanced capabilities are gated to paid tiers.
+9. Storage and durability
+Layer
+Backing store
+Crash semantics
+Events (WAL)
+append-only file + checksum chain
+once 202 returns, the bytes are fsync'd
+Episodes
+RocksDB column family
+rebuildable from WAL
+Facts
+Typed FactStore on RocksDB
+rebuildable from Events + LLM extraction (replayable)
+Beliefs
+Aggregator output on RocksDB
+rebuildable from Facts
+Understanding
+Concept store on RocksDB
+rebuildable from Beliefs + LLM synthesizer
+Blobs
+Content-addressed by SHA-256
+direct file storage
+The WAL is the system of record. Every derived layer can be rebuilt from it — a corrupted index is an operational annoyance, not a data loss event. This is the structural property the 
+benchmark paper
+ calls "information preservation on the write path" — and it's what lets V2's planned extractor improvements be backfilled across all historical data without migration.
+10. Observability
+Every authenticated response carries:
+X-RateLimit-Limit e.g. "500/s"
+X-RateLimit-Reset RFC 3339 next window
+X-Cortex-Token-Expires-In seconds remaining on the token
+X-Cortex-Token-Expires-At RFC 3339 absolute expiry
+X-Cortex-Request-Id for correlation
+Warning: 199 ... appears when token expiry ≤ 72h
+GET /v1/lifecycle/stream?scope=…
+ (SSE) emits a 
+lifecycle.event
+ payload per stage transition (
+captured
+, 
+indexed
+, 
+consolidated
+, 
+forgotten
+) so UIs can show "just learned that" status without polling. Catchup via 
+Last-Event-ID
+ works on reconnect.
+11. Trade-offs
+Some intentional non-goals and known costs:
+Storage cost.
+ Storing the raw event stream forever costs more than rewriting a compressed summary. Our benchmark scope is ~1.3× the storage of a comparable rewrite-based memory layer. We consider this the price of bi-temporal correctness.
+Read latency.
+ Holistic recall p50 is ~500 ms — significantly more than a single vector lookup. The hybrid stage (BM25 + HNSW + graph + reranker) is the cost. 
+view: granular
+ skips half the pipeline for a single-scope direct lookup (p50 ~80 ms) when you don't need stratification.
+Async derivation.
+ Facts populate in seconds; Beliefs and Understanding lag minutes-to-hours. A 
+recall
+ immediately after 
+experience
+ will return the raw event but may not yet reflect derived knowledge. Pass 
+?wait=indexed
+ to make this synchronous when needed.
+No first-class current-state cache.
+ "What does Acme look like right now" is computed at query time, not pre-materialized. This is a deliberate consequence of bi-temporal storage — the "now" is just 
+valid_to IS NULL
+.
+LLM dependency on the read path.
+/v1/answer
+ and 
+/v1/understanding/synthesize
+ both require an LLM. The system degrades gracefully if the LLM is unavailable: 
+/v1/recall
+ still returns the stratified pack; only the synthesized layers are unavailable.
+12. What ships in v1 vs what comes next
+Capability
+v1 (shipped)
+V2 (roadmap)
+Capture (WAL append)
+✓
+—
+Extract (Facts via LLM)
+✓
++ multi-modal extractors (images, audio)
+Reconcile (bi-temporal supersession)
+✓
++ conflict-detection heuristics for human review
+Forget (selective + GDPR)
+✓
+—
+Consolidate (Understanding synthesis)
+✓ (basic)
++ the "sleep" stage: cross-scope generalization, procedure formation
+Recall (hybrid + rerank + graph)
+✓
++ learned-retrieval ranking
+Auth (PASETO + 4-tier policy)
+✓
++ per-record cell-level redaction
+V2 is about the 
+fifth stage
+ — making "Consolidate" the brain stage where raw experience becomes durable understanding. The infrastructure for that stage already exists in v1 (the Understanding layer + synthesizer); V2 makes it the default and adds learned generalization across scopes. The target is the 64.6% Cat 3 score on LoCoMo (open-domain), which is the current ceiling on the public benchmarks.
+13. Conclusion
+CortexDB v1 is a shipped, benchmarked, production memory layer for AI agents — five derived layers from one source of truth, bi-temporal across both axes, scoped hierarchically, gated by an explicit capability stack, callable in one anonymous-signup curl. The architecture has structural properties — information preservation, bi-temporal correctness, derived-view replayability — that translate to measurable lifts on the public benchmarks (
+LongMemEval-S 93.8%, LoCoMo 86.9%
+). The same code path powers the free-tier 
+cortexdb-cli init
+ flow and the paid enterprise deployments. The pieces are small enough to read end-to-end in a weekend; the production surface is small enough to learn in an afternoon.
+Next steps
+Benchmark paper
+Methodology and per-category scores on LongMemEval-S and LoCoMo.
+Authorization
+PASETO tokens, capability stack, and how denials are surfaced.
+Five Memory Layers
+Events, Episodes, Facts, Beliefs, Understanding — what each is for.
+Bi-temporal Model
+valid_
+, recorded_
+, supersession chains, as-of queries.
+Lifecycle
+Five-stage flow + SSE stream for stage transitions.
+Python Quickstart
+Three lines: signup, experience, recall.
