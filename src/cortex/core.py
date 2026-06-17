@@ -145,6 +145,9 @@ def emit_lifecycle(conn, *, kind: str, scope: str, event_id: Optional[str] = Non
         RETURNING lifecycle_id, ts
     """), {"k": kind, "s": scope, "e": event_id, "j": job_id, "b": batch_id,
            "p": json.dumps(payload or {})}).fetchone()
+    # NOTIFY:让 ?wait= 的 listener 能立刻收到(通道 cortex_lc,payload=kind|event_id)
+    conn.execute(text("SELECT pg_notify('cortex_lc', :msg)"),
+                 {"msg": f"{kind}|{event_id or ''}"})
     return str(row.lifecycle_id)
 
 
