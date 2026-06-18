@@ -18,6 +18,19 @@ TARGET = ("192.168.1.21", 5432)
 BUFSZ = 65536
 
 
+def _set_keepalive(sock):
+    """设 TCP keepalive,防止 LAN 抖动导致连接静默死亡。"""
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    if hasattr(socket, "TCP_KEEPALIVE"):      # macOS
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPALIVE, 10)
+    elif hasattr(socket, "TCP_KEEPIDLE"):     # Linux
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 10)
+    if hasattr(socket, "TCP_KEEPINTVL"):
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 5)
+    if hasattr(socket, "TCP_KEEPCNT"):
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+
+
 def _fwd(src, dst):
     try:
         while True:
@@ -33,20 +46,18 @@ def _fwd(src, dst):
                 s.shutdown(socket.SHUT_RDWR)
             except Exception:
                 pass
-        try:
-            src.close()
-        except Exception:
-            pass
-        try:
-            dst.close()
-        except Exception:
-            pass
+            try:
+                s.close()
+            except Exception:
+                pass
 
 
 def _handle(client):
+    _set_keepalive(client)
     try:
         upstream = socket.create_connection(TARGET, timeout=5)
-    except Exception as e:
+        _set_keepalive(upstream)
+    except Exception:
         try:
             client.close()
         except Exception:

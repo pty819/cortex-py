@@ -103,9 +103,12 @@ def _insert_fact(conn, *, scope: str, subject_id: str, predicate: str,
 
 # ── 主入口 ──────────────────────────────────────────────────────────────────
 def extract_event(event_id: str) -> Dict[str, Any]:
-    """对单个 event 跑抽取。返回 {facts_extracted, entities, model}。"""
+    """对单个 event 跑抽取。返回 {facts_extracted, entities, model}。
+    架构:LLM 调用在 DB session 外(不在事务里持有连接等外部服务,防代理超时断连)。"""
     cfg = load_config()
     thresholds = (cfg.extraction.link_thresholds.merge, cfg.extraction.link_thresholds.new)
+
+    # ── Step 1: 加载 event(短事务)──
     with session_scope() as conn:
         ev = conn.execute(text("""
             SELECT scope, modality, content, context, observed_at, caller, recorded_at
@@ -114,8 +117,9 @@ def extract_event(event_id: str) -> Dict[str, Any]:
         if not ev:
             return {"error": "event not found"}
 
-        # ── content.kind="triple":前置 agent 已产出结构化三元组 → 直写,不经 LLM ──
         content = ev.content if isinstance(ev.content, dict) else {}
+
+        # triple 直写:快,不经 LLM,留在同一事务
         if content.get("kind") == "triple":
             res = _direct_write_triple(conn, ev.scope, content.get("triple", {}),
                                        ev.observed_at, event_id, thresholds)
@@ -123,35 +127,38 @@ def extract_event(event_id: str) -> Dict[str, Any]:
                            payload={"facts_extracted": res["facts_extracted"], "model": "triple-direct"})
             return {**res, "model": "triple-direct"}
 
-        text_body = content.get("text") or (content.get("message") if isinstance(content.get("message"), str) else None)
+        text_body = content.get("text")
         if content.get("kind") == "message":
             text_body = content.get("text")
         if not text_body:
-            # 非文本且非 triple:跳过
             emit_lifecycle(conn, kind="extracted", scope=ev.scope, event_id=event_id,
                            payload={"facts_extracted": 0, "note": "non-text content, skipped"})
             return {"facts_extracted": 0, "model": "skip", "reason": "non-text"}
 
-        # 抽取:真 LLM or mock;按 intent 选 prompt(诊断类用因果词表)
         intent = (ev.context or {}).get("intent") if isinstance(ev.context, dict) else None
         is_diagnosis = intent in ("diagnosis", "incident_retrospective", "structure")
-        if services.llm_configured("extraction"):
-            try:
-                extraction = _llm_extract(text_body, is_diagnosis=is_diagnosis)
-                model = cfg.llm.extraction.model
-            except Exception as e:  # noqa: BLE001
-                extraction = services.mock_extract(text_body)
-                model = f"mock-fallback({e.__class__.__name__})"
-        else:
-            extraction = services.mock_extract(text_body)
-            model = "mock-extractor"
-
+        scope = ev.scope
         observed_at = ev.observed_at.isoformat() if hasattr(ev.observed_at, "isoformat") else str(ev.observed_at)
-        # 链接 + 建 facts
+    # session 已关闭——下面调 LLM 不持有 DB 连接
+
+    # ── Step 2: LLM 抽取(无 DB session)──
+    if services.llm_configured("extraction"):
+        try:
+            extraction = _llm_extract(text_body, is_diagnosis=is_diagnosis)
+            model = cfg.llm.extraction.model
+        except Exception as e:  # noqa: BLE001
+            extraction = services.mock_extract(text_body)
+            model = f"mock-fallback({e.__class__.__name__})"
+    else:
+        extraction = services.mock_extract(text_body)
+        model = "mock-extractor"
+
+    # ── Step 3: 实体链接 + 建 facts + belief 聚合(短事务)──
+    with session_scope() as conn:
         ent_map: Dict[str, str] = {}
         for ent in extraction.get("entities", []):
             ent_map[ent["name"].lower()] = _resolve_or_create(
-                conn, ev.scope, ent["name"], ent.get("type"), ent.get("description", ent["name"]),
+                conn, scope, ent["name"], ent.get("type"), ent.get("description", ent["name"]),
                 thresholds, model)
 
         fact_ids: List[str] = []
@@ -159,33 +166,31 @@ def extract_event(event_id: str) -> Dict[str, Any]:
             subj = ent_map.get(f["subject"].lower())
             if not subj:
                 continue
-            pred = coerce_value(conn, ev.scope, "predicate", f["predicate"]) or f["predicate"]
+            pred = coerce_value(conn, scope, "predicate", f["predicate"]) or f["predicate"]
             obj_type = f.get("object_type", "entity")
             if obj_type == "entity":
                 obj_eid = ent_map.get(f["object"].lower())
                 if not obj_eid:
                     continue
-                _close_superseded(conn, ev.scope, subj, pred, observed_at)
-                fid = _insert_fact(conn, scope=ev.scope, subject_id=subj, predicate=pred,
+                _close_superseded(conn, scope, subj, pred, observed_at)
+                fid = _insert_fact(conn, scope=scope, subject_id=subj, predicate=pred,
                                    object_type="entity", object_entity_id=obj_eid, object_value=None,
                                    valid_from=observed_at, confidence=0.8, supports=[event_id], model=model)
             else:
-                val = coerce_value(conn, ev.scope, _guess_vocab(pred), f["object"])
+                val = coerce_value(conn, scope, _guess_vocab(pred), f["object"])
                 obj_value = {"datatype": "string", "value": val}
-                _close_superseded(conn, ev.scope, subj, pred, observed_at)
-                fid = _insert_fact(conn, scope=ev.scope, subject_id=subj, predicate=pred,
+                _close_superseded(conn, scope, subj, pred, observed_at)
+                fid = _insert_fact(conn, scope=scope, subject_id=subj, predicate=pred,
                                    object_type="literal", object_entity_id=None, object_value=obj_value,
                                    valid_from=observed_at, confidence=0.8, supports=[event_id], model=model)
             fact_ids.append(fid)
 
-        # 简单 belief 聚合:同 subject ≥2 facts → 一个 likely_true belief
         if fact_ids:
-            _aggregate_belief(conn, ev.scope, ent_map, fact_ids, observed_at, model)
+            _aggregate_belief(conn, scope, ent_map, fact_ids, observed_at, model)
 
-        emit_lifecycle(conn, kind="extracted", scope=ev.scope, event_id=event_id,
+        emit_lifecycle(conn, kind="extracted", scope=scope, event_id=event_id,
                        job_id=None, payload={"facts_extracted": len(fact_ids), "entities": len(ent_map),
                                              "model": model})
-        # embed_status 标记
         conn.execute(text("UPDATE events SET embed_status='done' WHERE event_id=CAST(:e AS uuid)"),
                      {"e": event_id})
         return {"facts_extracted": len(fact_ids), "entities": len(ent_map), "model": model,

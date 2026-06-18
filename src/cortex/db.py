@@ -5,43 +5,69 @@ schema 以 src/cortex/schema.sql 为单一真相源(避免 ORM 与 DDL 漂移)�
 """
 from __future__ import annotations
 
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.pool import NullPool
 
 from .config import load_config
 
-_engine: Engine | None = None
+_engine = None
 
 SCHEMA_SQL_PATH = Path(__file__).parent / "schema.sql"
 
 
-def get_engine() -> Engine:
+def get_engine():
     global _engine
     if _engine is None:
         cfg = load_config()
-        _engine = create_engine(cfg.database.url, pool_pre_ping=True, future=True)
+        _engine = create_engine(
+            cfg.database.url,
+            poolclass=NullPool,     # 不池化:每次 session 新建连接(代理场景最稳,无中毒连接复用)
+            future=True,
+        )
     return _engine
 
 
 @contextmanager
 def session_scope():
-    """事务 session 上下文(成功 commit / 异常 rollback)。"""
+    """事务 session 上下文(成功 commit / 异常 rollback)。
+    OperationalError 时 invalidate 连接,强制池丢弃(防中毒连接复用)。"""
     eng = get_engine()
     conn = eng.connect()
     tx = conn.begin()
     try:
-        # schema 限定:所有裸名解析到 cortex
         conn.execute(text("SET search_path = cortex, public"))
         yield conn
         tx.commit()
+    except OperationalError:
+        try:
+            tx.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        conn.invalidate()   # 强制池丢弃此连接,不再复用
+        raise
     except Exception:
         tx.rollback()
         raise
     finally:
         conn.close()
+
+
+def with_retry(fn, *args, retries=2, **kwargs):
+    """对 DB 操作的 OperationalError 重试(代理 LAN 抖动兜底)。"""
+    import time as _t
+    for i in range(retries):
+        try:
+            return fn(*args, **kwargs)
+        except OperationalError:
+            if i < retries - 1:
+                _t.sleep(0.5)
+                continue
+            raise
 
 
 def get_db():

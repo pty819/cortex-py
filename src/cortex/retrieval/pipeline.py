@@ -197,27 +197,27 @@ def recall(*, scope: str, query: Optional[str] = None, view: str = "local",
     t = {"plan": 0.0, "fetch": 0.0, "fuse": 0.0, "rerank": 0.0, "pack": 0.0}
     ch_counts: Dict[str, int] = {}
 
-    with session_scope() as conn:
-        # 无 query:返回 bounded slice(最近 facts/events)
-        if not query:
-            return _empty_pack(scope, view)
+    if not query:
+        return _empty_pack(scope, view)
 
+    # ── Phase 0: query embedding + HyDE(无 DB session,纯 HTTP)──
+    t0 = time.time()
+    q_emb = services.embed_one(query)
+    extra_embs: List[List[float]] = []
+    if adv.hyde_enabled and services.llm_configured("synthesis"):
+        try:
+            for _ in range(adv.hyde_passages):
+                raw = services.llm_chat("synthesis",
+                    "写一段假设性回答(假设记忆里有答案),纯文本无前缀。", query)
+                extra_embs.append(services.embed_one(services.strip_think(raw)))
+        except Exception:  # noqa: BLE001
+            pass
+    t["plan"] = (time.time() - t0) * 1000
+
+    # ── Phase 1: 6 通道 + RRF + 载入候选 facts(DB session,快)──
+    with session_scope() as conn:
         t0 = time.time()
-        q_emb = services.embed_one(query)
-        # ── 高级阶段:生成额外 query 向量 ──
-        extra_embs: List[List[float]] = []
-        if adv.hyde_enabled and services.llm_configured("synthesis"):
-            try:
-                for _ in range(adv.hyde_passages):
-                    raw = services.llm_chat("synthesis",
-                        "写一段假设性回答(假设记忆里有答案),纯文本无前缀。",
-                        query)
-                    hypo = services.strip_think(raw)  # 不截断:假设段落本就该完整,长查询需要长假设
-                    extra_embs.append(services.embed_one(hypo))
-            except Exception:  # noqa: BLE001
-                pass
         if adv.entity_vector_seed:
-            # query 实体名 → 其 entity embedding 作额外向量
             for nm in re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b", query)[:5]:
                 row = conn.execute(text(
                     "SELECT embedding FROM entities WHERE scope=:s AND merged_into IS NULL "
@@ -225,11 +225,8 @@ def recall(*, scope: str, query: Optional[str] = None, view: str = "local",
                     {"s": scope, "n": nm}).fetchone()
                 if row and row[0]:
                     extra_embs.append(list(row[0]))
-        t["plan"] = (time.time() - t0) * 1000
 
-        t0 = time.time()
         c_vec = _chan_vector(conn, scope, view, q_emb, top_k)
-        # 多 query 向量:并集(每个 extra 向量各召回,并入 c_vec)
         for e in extra_embs:
             c_vec = list(dict.fromkeys(c_vec + _chan_vector(conn, scope, view, e, top_k)))
         c_bm25 = _chan_bm25(conn, scope, view, query, top_k)
@@ -237,7 +234,6 @@ def recall(*, scope: str, query: Optional[str] = None, view: str = "local",
         c_ent = _chan_entity_name(conn, scope, view, query, top_k)
         c_syn = _expand_synonyms(conn, scope, query)
         c_tmp = _chan_temporal_decay(conn, scope, view, top_k)
-        # multihop:LLM 生成后续查询,各自 bm25 召回并入
         if adv.multihop_enabled and services.llm_configured("synthesis"):
             try:
                 import json as _j
@@ -255,7 +251,6 @@ def recall(*, scope: str, query: Optional[str] = None, view: str = "local",
 
         t0 = time.time()
         scores = _rrf([c_vec, c_bm25, c_graph, c_ent, c_syn, c_tmp], cfg.retrieval.rrf_k)
-        # salience:用 events.access_count 作 prior 加权到分数
         if adv.salience_weight > 0 and scores:
             for fid in list(scores.keys()):
                 ac = conn.execute(text("""SELECT coalesce(max(e.access_count),0) FROM events e
@@ -268,7 +263,6 @@ def recall(*, scope: str, query: Optional[str] = None, view: str = "local",
         if not ranked:
             return _pack(scope, view, query, [], [], [], t, ch_counts, "", model="none")
 
-        # 载入候选 facts
         rows = conn.execute(text("""
             SELECT f.fact_id::text, f.scope, f.predicate, f.object_type, f.object_value,
                    f.object_entity_id::text, f.subject_id::text, f.confidence,
@@ -281,37 +275,49 @@ def recall(*, scope: str, query: Optional[str] = None, view: str = "local",
         rowmap = {r.fact_id: r for r in rows}
         ordered_rows = [rowmap[fid] for fid in ranked if fid in rowmap]
 
-        # temporal.natural → valid_during 过滤(fact 与窗重叠)
         if valid_during:
             vf, vt = valid_during
             ordered_rows = [r for r in ordered_rows
                             if (r.valid_from or "") <= vt and (r.valid_to is None or (r.valid_to or "") >= vf)]
-            scores = {fid: scores[fid] for fid in (rowmap and [r.fact_id for r in ordered_rows])}
+    # session 关闭——下面 rerank 不持有 DB 连接
 
-        # rerank(真实 prism)
-        t0 = time.time()
-        docs = [_fact_text(r) for r in ordered_rows]
+    # ── Phase 2: rerank(无 DB session,纯 HTTP)──
+    t0 = time.time()
+    docs = [_fact_text(r) for r in ordered_rows]
+    try:
+        rered = services.rerank(query, docs)
+        keep_idx = [item["index"] for item in rered
+                    if item.get("relevance_score", 0) >= cfg.rerank.threshold]
+        if not keep_idx:
+            keep_idx = [item["index"] for item in rered[:10]]
+        reranked_rows = [ordered_rows[i] for i in keep_idx]
+    except Exception:  # noqa: BLE001
+        reranked_rows = ordered_rows[:10]
+    t["rerank"] = (time.time() - t0) * 1000
+
+    # ── Phase 3: pack 装配 + 缓存(DB session,快)──
+    t0 = time.time()
+    pack = None
+    for _attempt in range(3):
         try:
-            rered = services.rerank(query, docs)
-            keep_idx = [item["index"] for item in rered
-                        if item.get("relevance_score", 0) >= cfg.rerank.threshold]
-            if not keep_idx:
-                keep_idx = [item["index"] for item in rered[:10]]
-            reranked_rows = [ordered_rows[i] for i in keep_idx]
-            reranked_scores = {ordered_rows[i].fact_id: rered_map_score(rered, i)
-                               for i in keep_idx}
-        except Exception:  # noqa: BLE001  rerank 不可用时退回 RRF 顺序
-            reranked_rows = ordered_rows[:10]
-            reranked_scores = {r.fact_id: scores.get(r.fact_id, 0) for r in reranked_rows}
-        t["rerank"] = (time.time() - t0) * 1000
-
-        t0 = time.time()
-        pack = _assemble_pack(conn, scope, view, query, reranked_rows, t, ch_counts,
-                              budgets=budgets, citation_mode=citation_mode,
-                              exclude_content=exclude_content, recorded_during=recorded_during,
-                              include_superseded=include_superseded)
-        t["pack"] = (time.time() - t0) * 1000
-        return pack
+            with session_scope() as conn:
+                pack = _assemble_pack(conn, scope, view, query, reranked_rows, t, ch_counts,
+                                      budgets=budgets, citation_mode=citation_mode,
+                                      exclude_content=exclude_content, recorded_during=recorded_during,
+                                      include_superseded=include_superseded)
+            break
+        except Exception:  # noqa: BLE001 代理抖动,重试
+            if _attempt < 2:
+                time.sleep(0.3)
+                continue
+            # 三次都失败:返回最小 pack(至少有 facts)
+            pack = {"pack_id": "pack_" + uuid.uuid4().hex[:24], "scope": scope, "view": view,
+                    "layers": {"events": [], "facts": [_fact_to_out(r) for r in reranked_rows[:10]],
+                               "beliefs": []},
+                    "context_block": "", "provenance": {"trail": [], "citations": {}},
+                    "diagnostics": {"time_ms": t, "channels": ch_counts, "note": "pack assembly failed, partial"}}
+    t["pack"] = (time.time() - t0) * 1000
+    return pack
 
 
 def rered_map_score(rered, idx):
@@ -408,7 +414,10 @@ def _assemble_pack(conn, scope, view, query, fact_rows, t, ch_counts,
                        "citations": citations},
         "diagnostics": {"time_ms": t, "channels": ch_counts},
     }
-    _cache_pack(conn, pack)
+    try:
+        _cache_pack(conn, pack)
+    except Exception:  # noqa: BLE001 缓存失败不影响召回结果
+        pass
     return pack
 
 
