@@ -46,17 +46,6 @@ const navItems = [
             </div>
             <div class="header-right">
               <ScopeSelector />
-              <NTag
-                :type="settings.useMock ? 'warning' : 'success'"
-                size="small"
-                round
-                checkable
-                :checked="settings.useMock"
-                @update:checked="settings.setUseMock($event)"
-                title="Toggle mock data when the backend is offline"
-              >
-                {{ settings.useMock ? 'Mock data' : 'Live API' }}
-              </NTag>
             </div>
           </header>
 

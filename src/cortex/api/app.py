@@ -39,6 +39,29 @@ def auth(authorization: str = Header(default=""), x_cortex_actor: str = Header(d
 
 
 # ── health ──────────────────────────────────────────────────────────────────
+@app.get("/v1/scopes/list")
+def scopes_list(prefix: str = Query(""), limit: int = 100, actor: str = Depends(auth)):
+    """列出 DB 里的 scope(动态,供前端下拉框用)。可选前缀过滤。"""
+    sql = "SELECT scope_path, auto_provisioned FROM scopes"
+    p: dict = {"lim": limit}
+    if prefix:
+        sql += " WHERE scope_path LIKE :p"; p["p"] = f"{prefix}%"
+    sql += " ORDER BY scope_path LIMIT :lim"
+    with session_scope() as c:
+        rows = c.execute(text(sql), p).fetchall()
+    # 同时从 facts/events 里补上 DB 有数据但 scopes 表没注册的 scope
+    with session_scope() as c:
+        extra = c.execute(text("""
+            SELECT DISTINCT scope FROM (
+                SELECT scope FROM facts UNION SELECT scope FROM events UNION SELECT scope FROM entities
+            ) t WHERE scope NOT IN (SELECT scope_path FROM scopes)
+            ORDER BY scope LIMIT :lim
+        """), {"lim": limit}).fetchall()
+    items = [{"scope_path": r[0], "auto_provisioned": r[1]} for r in rows]
+    items += [{"scope_path": r[0], "auto_provisioned": True} for r in extra]
+    return {"items": items}
+
+
 @app.get("/v1/health")
 def health():
     from ..db import assert_services_reachable
@@ -224,7 +247,7 @@ def beliefs_why(belief_id: str, actor: str = Depends(auth)):
         try:
             import json as _j
             payload = _j.dumps({"belief": belief["claim"], "facts": [n["summary"] for n in nodes if n["type"] == "fact"]})
-            raw = services.llm_chat("synthesis", "用中文解释为什么有这个 belief,引用支持事实,简短。", payload)
+            raw = services.llm_chat("synthesis", __import__("cortex.prompts", fromlist=["BELIEFS_WHY_NARRATIVE"]).BELIEFS_WHY_NARRATIVE, payload)
             narrative = services.strip_think(raw); nmodel = load_config().llm.synthesis.model
         except Exception:  # noqa: BLE001
             narrative = f"{belief['about']['name']} {belief['claim']}(基于 {len(facts)} 条事实)。"
@@ -297,7 +320,7 @@ def do_answer(body: schemas.AnswerRequest, actor: str = Depends(auth)):
     if services.llm_configured("answer"):
         try:
             raw = services.llm_chat("answer",
-                "依据给定记忆(含[n]引用标记)回答用户问题,在答案里保留引用标记。",
+                __import__("cortex.prompts", fromlist=["ANSWER_SYSTEM"]).ANSWER_SYSTEM,
                 json.dumps({"query": body.query, "pack_layers": pack["layers"]}))
             ans = services.strip_think(raw)
             model = load_config().llm.answer.model
@@ -314,7 +337,7 @@ def do_answer(body: schemas.AnswerRequest, actor: str = Depends(auth)):
         try:
             import json as _j
             vraw = services.llm_chat("verifier",
-                "判断答案是否被引用的事实支持。输出 JSON {supported:bool, issues:[...]}。",
+                __import__("cortex.prompts", fromlist=["VERIFIER_SYSTEM"]).VERIFIER_SYSTEM,
                 _j.dumps({"answer": ans, "citations": pack["layers"]["facts"][:6]}))
             import json as _j2
             verified = services.parse_llm_json(vraw) if vraw else None

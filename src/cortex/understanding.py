@@ -40,9 +40,8 @@ def synthesize_scope(scope: str, topics: Optional[List[str]] = None) -> Dict[str
                                   ensure_ascii=False)
             try:
                 if services.llm_configured("synthesis"):
-                    raw = services.llm_chat("synthesis",
-                        "为给定主题合成一个概念:输出 JSON {name, summary, confidence(0-1), related:[{name,relation}]}。"
-                        "relation ∈ specializes/generalizes/contrasts/co_occurs/causes。简短。",
+                    from .prompts import UNDERSTANDING_SYNTHESIZE
+                    raw = services.llm_chat("synthesis", UNDERSTANDING_SYNTHESIZE,
                         material)
                     data = services.parse_llm_json(raw)
                 else:

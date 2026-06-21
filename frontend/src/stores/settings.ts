@@ -2,22 +2,11 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
 /**
- * Dev-mode toggle: when the FastAPI backend is unreachable, fall back to mock
- * data so the UI is still explorable. Persisted in localStorage.
+ * Mock 模式已移除——前端永远走 Live API。
+ * useMock 固定 false,不可切换。
  */
-const STORAGE_KEY = 'cortex.useMock'
-
 export const useSettingsStore = defineStore('settings', () => {
-  const stored =
-    typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null
-  const useMock = ref<boolean>(stored === null ? false : stored === 'true')
-
-  function setUseMock(value: boolean) {
-    useMock.value = value
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(STORAGE_KEY, String(value))
-    }
-  }
-
+  const useMock = ref<boolean>(false)
+  function setUseMock(_: boolean) { /* no-op: mock removed */ }
   return { useMock, setUseMock }
 })

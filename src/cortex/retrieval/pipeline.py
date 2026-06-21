@@ -17,6 +17,7 @@ from sqlalchemy import text
 from .. import services
 from ..config import load_config
 from ..db import session_scope
+from ..prompts import SYNTHESIS_CONTEXT_BLOCK, HYDE_SYSTEM, MULTIHOP_SYSTEM
 
 
 def _scope_filter(scope: str, view: str) -> Tuple[str, Dict[str, Any]]:
@@ -237,8 +238,7 @@ def recall(*, scope: str, query: Optional[str] = None, view: str = "local",
         if adv.multihop_enabled and services.llm_configured("synthesis"):
             try:
                 import json as _j
-                raw = services.llm_chat("synthesis",
-                    "把用户问题拆成 N 个后续检索子问题,输出 JSON {queries:[...]}。",
+                raw = services.llm_chat("synthesis", MULTIHOP_SYSTEM,
                     _j.dumps({"query": query, "n": adv.multihop_count}))
                 subs = services.parse_llm_json(raw)
                 for sq in (subs.get("queries") or [])[:adv.multihop_count]:
@@ -432,8 +432,7 @@ def _context_block(query, facts, beliefs, citation_mode="inline_with_markers", b
     if services.llm_configured("synthesis"):
         try:
             payload = json.dumps({"facts": facts_in, "beliefs": beliefs[:5]})
-            raw = services.llm_chat("synthesis",
-                                     "用引用标记[n]把给定事实串成一段中文综述,只输出综述本身。",
+            raw = services.llm_chat("synthesis", SYNTHESIS_CONTEXT_BLOCK,
                                      payload)
             return services.strip_think(raw)
         except Exception:  # noqa: BLE001

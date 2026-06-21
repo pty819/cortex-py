@@ -16,7 +16,6 @@ import {
 } from 'naive-ui'
 import { computed, onUnmounted, ref } from 'vue'
 import { postExperience, subscribeLifecycle } from '@/api'
-import { mockExperienceResponse } from '@/api/mock'
 import { useScopeStore } from '@/stores/scope'
 import { useSettingsStore } from '@/stores/settings'
 import type { ExperienceResponse, LifecycleFrame, Modality } from '@/types'
@@ -93,18 +92,10 @@ async function submit() {
   }
 
   try {
-    if (settings.useMock) {
-      // Simulate latency + lifecycle frames for demo.
-      await new Promise((r) => setTimeout(r, 350))
-      response.value = { ...mockExperienceResponse, lifecycle_stream: `/v1/lifecycle/stream?event_id=${mockExperienceResponse.event_id}` }
-      message.success('Captured (mock)')
-      runMockLifecycle()
-    } else {
-      const res = await postExperience(payload)
-      response.value = res
-      message.success('Captured')
-      openLifecycle(res.event_id)
-    }
+    const res = await postExperience(payload)
+    response.value = res
+    message.success('Captured')
+    openLifecycle(res.event_id)
   } catch (e: any) {
     error.value = e?.message ? `POST /experience failed: ${e.message}` : String(e)
     message.error('Ingest failed — see error below')
@@ -141,42 +132,6 @@ function openLifecycle(eventId: string) {
       window.clearTimeout(waitTimer)
     },
   )
-}
-
-function runMockLifecycle() {
-  sseConnected.value = true
-  sseWaiting.value = false
-  const seq: LifecycleFrame[] = [
-    { kind: 'captured', event_id: mockExperienceResponse.event_id, ts: new Date().toISOString() },
-  ]
-  let i = 0
-  const push = () => {
-    const next = seq[i]
-    if (!next) return
-    frames.value.push(next)
-    i++
-    if (i < seq.length) setTimeout(push, 500)
-    else {
-      setTimeout(() => {
-        frames.value.push({
-          kind: 'extracted',
-          event_id: mockExperienceResponse.event_id,
-          facts_extracted: 2,
-          ts: new Date().toISOString(),
-        })
-      }, 600)
-      setTimeout(() => {
-        frames.value.push({
-          kind: 'indexed',
-          event_id: mockExperienceResponse.event_id,
-          facts_extracted: 2,
-          ts: new Date().toISOString(),
-        })
-        terminal.value = true
-      }, 1300)
-    }
-  }
-  push()
 }
 
 onUnmounted(() => {
@@ -252,14 +207,14 @@ const responseJson = computed(() => (response.value ? JSON.stringify(response.va
         <NCard title="Lifecycle stream" size="small">
           <template #header-extra>
             <NTag v-if="sseConnected" type="success" size="small" round>live</NTag>
-            <NTag v-else-if="sseWaiting && !settings.useMock" type="warning" size="small" round>
+            <NTag v-else-if="sseWaiting && true" type="warning" size="small" round>
               waiting for backend
             </NTag>
-            <NTag v-else-if="settings.useMock" type="warning" size="small" round>mock</NTag>
+            
           </template>
 
           <NAlert
-            v-if="sseWaiting && !settings.useMock && frames.length === 0"
+            v-if="sseWaiting && true && frames.length === 0"
             type="warning"
             :show-icon="true"
             style="margin-bottom: 12px"

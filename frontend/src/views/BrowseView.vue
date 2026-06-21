@@ -12,7 +12,6 @@ import {
 } from 'naive-ui'
 import { computed, h, ref, watch } from 'vue'
 import { getFacts, getEntities } from '@/api'
-import { mockFacts, mockEntities } from '@/api/mock'
 import { useScopeStore } from '@/stores/scope'
 import { useSettingsStore } from '@/stores/settings'
 import type { Entity, Fact } from '@/types'
@@ -33,23 +32,18 @@ const pageSize = ref(10)
 async function load() {
   loading.value = true
   try {
-    if (settings.useMock) {
-      facts.value = mockFacts
-      entities.value = mockEntities
-    } else {
-      const [f, e] = await Promise.all([
-        getFacts(scopeStore.scope),
-        getEntities(scopeStore.scope),
-      ])
-      facts.value = f.items
-      entities.value = e.items
-    }
+    const [f, e] = await Promise.all([
+      getFacts(scopeStore.scope),
+      getEntities(scopeStore.scope),
+    ])
+    facts.value = f.items
+    entities.value = e.items
   } finally {
     loading.value = false
   }
 }
 
-watch(() => [scopeStore.scope, settings.useMock], load, { immediate: true })
+watch(() => scopeStore.scope, load, { immediate: true })
 
 // ---- Columns ----
 const factColumns = computed<DataTableColumns<Fact>>(() => [

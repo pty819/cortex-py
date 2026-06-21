@@ -23,13 +23,12 @@ import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue
 import { Network, type Options as NetworkOptions } from 'vis-network'
 import { DataSet } from 'vis-data'
 import { getEntities, getFacts, getTimeline } from '@/api'
-import { mockEntities, mockFacts, mockTimeline } from '@/api/mock'
 import { useScopeStore } from '@/stores/scope'
-import { useSettingsStore } from '@/stores/settings'
+
 import type { Entity, Fact, TimelineResponse } from '@/types'
 
 const scopeStore = useScopeStore()
-const settings = useSettingsStore()
+
 const message = useMessage()
 
 const entities = ref<Entity[]>([])
@@ -194,17 +193,12 @@ async function loadGraph() {
   loading.value = true
   error.value = null
   try {
-    if (settings.useMock) {
-      entities.value = mockEntities
-      facts.value = mockFacts
-    } else {
-      const [ent, fct] = await Promise.all([
-        getEntities(scopeStore.scope),
-        getFacts(scopeStore.scope),
-      ])
-      entities.value = ent.items
-      facts.value = fct.items
-    }
+    const [ent, fct] = await Promise.all([
+      getEntities(scopeStore.scope),
+      getFacts(scopeStore.scope),
+    ])
+    entities.value = ent.items
+    facts.value = fct.items
     buildGraph()
     await nextTick()
     renderNetwork()
@@ -245,15 +239,11 @@ async function openTimeline() {
   timelineLoading.value = true
   timelineData.value = null
   try {
-    if (settings.useMock) {
-      timelineData.value = mockTimeline
-    } else {
-      timelineData.value = await getTimeline(
-        scopeStore.scope,
-        selectedId.value,
-        timelinePredicate.value,
-      )
-    }
+    timelineData.value = await getTimeline(
+      scopeStore.scope,
+      selectedId.value,
+      timelinePredicate.value,
+    )
   } catch (e: any) {
     message.error(`Timeline failed: ${e?.message || e}`)
   } finally {
@@ -270,9 +260,9 @@ onBeforeUnmount(() => {
   network.value = null
 })
 
-// Reload when scope changes or mock toggles
+// Reload when scope changes
 watch(
-  () => [scopeStore.scope, settings.useMock],
+  () => scopeStore.scope,
   () => {
     loadGraph()
   },

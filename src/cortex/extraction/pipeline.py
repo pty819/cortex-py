@@ -144,7 +144,7 @@ def extract_event(event_id: str) -> Dict[str, Any]:
     # ── Step 2: LLM 抽取(无 DB session)──
     if services.llm_configured("extraction"):
         try:
-            extraction = _llm_extract(text_body, is_diagnosis=is_diagnosis)
+            extraction = _llm_extract(text_body, is_diagnosis=is_diagnosis, intent=intent)
             model = cfg.llm.extraction.model
         except Exception as e:  # noqa: BLE001
             extraction = services.mock_extract(text_body)
@@ -314,23 +314,19 @@ def _direct_write_triple(conn, scope: str, triple: Dict[str, Any], observed_at,
     return {"facts_extracted": 1, "entities": 2, "fact_ids": [fid]}
 
 
-def _llm_extract(text_body: str, is_diagnosis: bool = False) -> Dict[str, Any]:
-    """真实 LLM 抽取 + R1 fallback 链:json_schema → json_object → prompt → 健壮解析。
-    is_diagnosis=True 时用因果词表 prompt(机械故障诊断场景)。"""
+def _llm_extract(text_body: str, is_diagnosis: bool = False,
+                 intent: str = None) -> Dict[str, Any]:
+    """真实 LLM 抽取 + R1 fallback 链。按 intent 选详细 prompt。"""
+    from ..prompts import (EXTRACTION_SYSTEM_DIAGNOSIS, EXTRACTION_SYSTEM_STRUCTURE,
+                           EXTRACTION_SYSTEM_GENERAL)
     cfg = load_config().llm.extraction
-    if is_diagnosis:
-        sys_msg = (
-            "从机械故障诊断文本抽取因果三元组。predicate 必须用因果词表之一:"
-            "caused_by, led_to, symptom_of, affects, part_of, has_component, has_symptom, "
-            "repaired_by, observed_by, preceded_by。"
-            "subject/object 是实体(故障/部件/人/症状/措施),名字须与文本一致。"
-            "输出 JSON {entities:[{name,type,description}], facts:[{subject,predicate,object,object_type,confidence}]}。"
-            "object_type 为 entity(实体引用)或 literal(字面值如温度/型号)。保留完整因果链,不要遗漏。"
-        )
+    # 按 intent 选 prompt(结构文档 vs 故障诊断 vs 通用)
+    if intent == "structure":
+        sys_msg = EXTRACTION_SYSTEM_STRUCTURE
+    elif intent in ("diagnosis", "incident_retrospective") or is_diagnosis:
+        sys_msg = EXTRACTION_SYSTEM_DIAGNOSIS
     else:
-        sys_msg = ("Extract knowledge-graph triples from the text. Output ONLY a JSON object "
-                   "{entities:[{name,type,description}], facts:[{subject,predicate,object,object_type}]}. "
-                   "subject/object names must match entity names verbatim. No prose, no thinking tags.")
+        sys_msg = EXTRACTION_SYSTEM_GENERAL
 
     attempts = []
     modes = []

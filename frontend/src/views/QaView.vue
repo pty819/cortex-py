@@ -18,15 +18,11 @@ import {
 } from 'naive-ui'
 import { computed, ref } from 'vue'
 import { postAnswer, postRecall } from '@/api'
-import { mockAnswer, mockPack } from '@/api/mock'
 import { useScopeStore } from '@/stores/scope'
-import { useSettingsStore } from '@/stores/settings'
 import type { AnswerResponse, Citation, StratifiedPack, Fact } from '@/types'
 import { getFacts } from '@/api'
-import { mockFacts } from '@/api/mock'
 
 const scopeStore = useScopeStore()
-const settings = useSettingsStore()
 const message = useMessage()
 
 const query = ref('Who owns the Q3 renewal?')
@@ -43,7 +39,7 @@ const factCache = ref<Record<string, Fact>>({})
 async function ensureFactCache() {
   if (Object.keys(factCache.value).length > 0) return
   try {
-    const f = settings.useMock ? { items: mockFacts } : await getFacts(scopeStore.scope)
+    const f = await getFacts(scopeStore.scope)
     factCache.value = Object.fromEntries(f.items.map((x) => [x.fact_id, x]))
   } catch {
     /* non-fatal */
@@ -62,19 +58,13 @@ async function ask() {
   activeCitation.value = null
   try {
     await ensureFactCache()
-    if (settings.useMock) {
-      await new Promise((r) => setTimeout(r, 400))
-      answer.value = mockAnswer
-      pack.value = mockPack
-    } else {
-      // Fetch the answer; also fetch the raw pack for the collapsible view.
-      const [ans, pk] = await Promise.all([
-        postAnswer({ scope: scopeStore.scope, query: query.value }),
-        postRecall({ scope: scopeStore.scope, query: query.value, view: 'holistic' }).catch(() => null),
-      ])
-      answer.value = ans
-      pack.value = pk
-    }
+    // Fetch the answer; also fetch the raw pack for the collapsible view.
+    const [ans, pk] = await Promise.all([
+      postAnswer({ scope: scopeStore.scope, query: query.value }),
+      postRecall({ scope: scopeStore.scope, query: query.value, view: 'holistic' }).catch(() => null),
+    ])
+    answer.value = ans
+    pack.value = pk
   } catch (e: any) {
     error.value = e?.message ? `Answer failed: ${e.message}` : String(e)
     message.error('Query failed')

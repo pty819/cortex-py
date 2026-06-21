@@ -18,11 +18,18 @@ const ACTOR = 'user:alice'
 
 const EXAMPLE_SCOPES = [
   'org:acme/dept:sales/user:alice',
-  'org:acme/dept:eng/user:alice',
-  'org:acme/dept:sales',
-  'org:acme',
-  'user:alice',
 ]
+
+// 动态从 DB 拉 scope 列表(失败时回退到预设)
+export async function fetchScopes(): Promise<string[]> {
+  try {
+    const r = await http.get<{ items: { scope_path: string }[] }>('/scopes/list')
+    const scopes = r.data.items.map((i) => i.scope_path)
+    return scopes.length > 0 ? scopes : EXAMPLE_SCOPES
+  } catch {
+    return EXAMPLE_SCOPES
+  }
+}
 
 export const DEFAULT_SCOPE: string =
   EXAMPLE_SCOPES[0] ?? 'org:acme/dept:sales/user:alice'
