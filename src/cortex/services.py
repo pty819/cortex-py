@@ -96,9 +96,14 @@ def strip_think(raw: str) -> str:
 def parse_llm_json(raw: str) -> Any:
     """从 LLM 响应里健壮提取 JSON 对象:剥 think → 试 ```json``` 代码块 → 括号匹配。"""
     s = strip_think(raw)
-    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", s, flags=re.S)
+    # 试 fenced code block: ```json ... ``` (贪婪匹配整个块,然后 json.loads 容错)
+    m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", s, flags=re.S)
     if m:
-        return json.loads(m.group(1))
+        try:
+            return json.loads(m.group(1))
+        except json.JSONDecodeError:
+            pass  # fenced 块解析失败,fall through 到括号匹配
+    # 无 fence:括号匹配找最外层 { ... }
     start = s.find("{")
     if start < 0:
         raise ValueError("no JSON object in response")
