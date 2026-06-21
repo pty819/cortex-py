@@ -70,24 +70,38 @@ def _chan_bm25(conn, scope: str, view: str, query: str, top_k: int) -> List[str]
 
 
 def _chan_graph(conn, scope: str, view: str, q_emb: List[float], max_hops: int, top_k: int) -> List[str]:
+    """图遍历:种子实体出发,递归 CTE BFS max_hops 跳,返回路径上的 facts。
+    Stage 0 验证过的递归 CTE 现在真正用于产品路径。"""
     frag, p = _scope_filter(scope, view)
-    p["q"] = str(q_emb); p["k"] = top_k
-    # 种子=最近实体;返回种子及其直接邻居(1 跳)上的 facts
+    p["q"] = str(q_emb); p["k"] = top_k; p["h"] = max_hops
     sql = f"""
-      WITH seeds AS (
+      WITH RECURSIVE seeds AS (
         SELECT entity_id FROM entities WHERE merged_into IS NULL AND embedding IS NOT NULL AND {frag}
         ORDER BY embedding <=> CAST(:q AS vector) LIMIT 5
       ),
-      reach AS (
-        SELECT object_entity_id AS node FROM facts f, seeds s
-        WHERE f.subject_id=s.entity_id AND f.{frag} AND f.valid_to IS NULL AND f.recorded_to IS NULL
-          AND f.object_entity_id IS NOT NULL
+      graph_walk AS (
+        -- 第 1 跳:种子的出边
+        SELECT f.object_entity_id AS node, f.predicate, 1 AS hop
+          FROM facts f, seeds s
+         WHERE f.subject_id = s.entity_id AND f.{frag}
+           AND f.valid_to IS NULL AND f.recorded_to IS NULL
+           AND f.object_entity_id IS NOT NULL
+        UNION ALL
+        -- 递归:沿 node 的出边继续(max_hops 跳)
+        SELECT f.object_entity_id, f.predicate, gw.hop + 1
+          FROM facts f JOIN graph_walk gw ON f.subject_id = gw.node
+         WHERE f.{frag} AND f.valid_to IS NULL AND f.recorded_to IS NULL
+           AND f.object_entity_id IS NOT NULL
+           AND gw.hop < :h
+      ),
+      reachable AS (
+        SELECT entity_id FROM seeds
+        UNION SELECT node FROM graph_walk WHERE node IS NOT NULL
       )
       SELECT DISTINCT f.fact_id::text FROM facts f
       WHERE f.{frag} AND f.valid_to IS NULL AND f.recorded_to IS NULL
-        AND (f.subject_id IN (SELECT entity_id FROM seeds)
-             OR f.object_entity_id IN (SELECT entity_id FROM seeds)
-             OR f.subject_id IN (SELECT node FROM reach))
+        AND (f.subject_id IN (SELECT entity_id FROM reachable)
+             OR f.object_entity_id IN (SELECT entity_id FROM reachable))
       LIMIT :k
     """
     return [r[0] for r in conn.execute(text(sql), p).fetchall()]
@@ -263,22 +277,39 @@ def recall(*, scope: str, query: Optional[str] = None, view: str = "local",
         if not ranked:
             return _pack(scope, view, query, [], [], [], t, ch_counts, "", model="none")
 
-        rows = conn.execute(text("""
+        # ── 双时态过滤:在候选加载时应用 as_of / valid_during / recorded_during ──
+        temporal_where = ""
+        temporal_params: Dict[str, Any] = {}
+        if as_of:
+            # as_of: 裁剪双轴 — valid_from <= as_of < valid_to AND recorded_from <= as_of
+            temporal_where += " AND f.valid_from <= CAST(:ao AS timestamptz) AND (f.valid_to IS NULL OR CAST(:ao AS timestamptz) < f.valid_to)"
+            if include_superseded:
+                # include_superseded: 返回历史版本(recorded_from <= as_of),不强制 recorded_to IS NULL
+                temporal_where = " AND f.valid_from <= CAST(:ao AS timestamptz) AND (f.valid_to IS NULL OR CAST(:ao AS timestamptz) < f.valid_to) AND f.recorded_from <= CAST(:ao AS timestamptz)"
+            temporal_params["ao"] = as_of
+        else:
+            if not include_superseded:
+                temporal_where += " AND f.recorded_to IS NULL"
+        if valid_during:
+            vf, vt = valid_during
+            temporal_where += " AND f.valid_from <= CAST(:vt AS timestamptz) AND (f.valid_to IS NULL OR f.valid_to >= CAST(:vf AS timestamptz))"
+            temporal_params["vf"] = vf; temporal_params["vt"] = vt
+        if recorded_during:
+            rf, rt = recorded_during
+            temporal_where += " AND f.recorded_from <= CAST(:rt AS timestamptz) AND (f.recorded_to IS NULL OR f.recorded_to >= CAST(:rf AS timestamptz))"
+            temporal_params["rf"] = rf; temporal_params["rt"] = rt
+
+        rows = conn.execute(text(f"""
             SELECT f.fact_id::text, f.scope, f.predicate, f.object_type, f.object_value,
                    f.object_entity_id::text, f.subject_id::text, f.confidence,
                    f.valid_from::text, f.valid_to::text,
                    s.canonical_name AS subject_name, o.canonical_name AS object_name
             FROM facts f LEFT JOIN entities s ON s.entity_id=f.subject_id
                          LEFT JOIN entities o ON o.entity_id=f.object_entity_id
-            WHERE f.fact_id = ANY(CAST(:ids AS uuid[]))
-        """), {"ids": "{" + ",".join(ranked) + "}"}).fetchall()
+            WHERE f.fact_id = ANY(CAST(:ids AS uuid[])){temporal_where}
+        """), {"ids": "{" + ",".join(ranked) + "}", **temporal_params}).fetchall()
         rowmap = {r.fact_id: r for r in rows}
         ordered_rows = [rowmap[fid] for fid in ranked if fid in rowmap]
-
-        if valid_during:
-            vf, vt = valid_during
-            ordered_rows = [r for r in ordered_rows
-                            if (r.valid_from or "") <= vt and (r.valid_to is None or (r.valid_to or "") >= vf)]
     # session 关闭——下面 rerank 不持有 DB 连接
 
     # ── Phase 2: rerank(无 DB session,纯 HTTP)──

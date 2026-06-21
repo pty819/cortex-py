@@ -35,8 +35,10 @@ def coerce_value(conn, scope: str, vocab_name: str, raw: str) -> Optional[str]:
 # ── entity linking (B over C) ───────────────────────────────────────────────
 def _resolve_or_create(conn, scope: str, name: str, etype: Optional[str],
                        description: str, thresholds: Tuple[float, float],
-                       model: str) -> str:
-    """返回 entity_id。A 层别名→C 层向量召回→阈值→新建。"""
+                       model: str, context_text: str = "") -> str:
+    """返回 entity_id。A 层别名→C 层向量召回→阈值→新建。
+    灰区(merge_thr > cos >= new_thr)走 LLM 判定:传入候选实体+原文上下文,LLM 决定复用/新建。
+    无 LLM key 时灰区默认新建(保守,不错误合并)。"""
     # A 层:别名精确命中
     a = conn.execute(text("""
         SELECT e.entity_id FROM entity_aliases a JOIN entities e ON e.entity_id=a.entity_id
@@ -54,15 +56,30 @@ def _resolve_or_create(conn, scope: str, name: str, etype: Optional[str],
     # C 层:向量召回 top-5
     emb = services.embed_one(load_config().extraction.embedding_text.format(name=name, description=description))
     cands = conn.execute(text("""
-        SELECT entity_id, canonical_name, 1-(embedding <=> CAST(:q AS vector)) AS cos
+        SELECT entity_id, canonical_name, description, entity_type, 1-(embedding <=> CAST(:q AS vector)) AS cos
         FROM entities WHERE scope=:s AND merged_into IS NULL AND embedding IS NOT NULL
         ORDER BY embedding <=> CAST(:q AS vector) LIMIT 5
     """), {"q": str(emb), "s": scope}).fetchall()
     merge_thr, new_thr = thresholds
     if cands and cands[0].cos >= merge_thr:
         return str(cands[0].entity_id)         # 直接合并(省 LLM)
-    if cands and cands[0].cos >= 0.5:           # 灰区:MVP 规则版(>0.5 复用,< 则新建;有 key 可升级 LLM)
-        return str(cands[0].entity_id)
+    if cands and cands[0].cos >= new_thr:
+        # 灰区:LLM 判定(传入候选实体列表 + 原文上下文)
+        best = cands[0]
+        if services.llm_configured("extraction") and context_text:
+            try:
+                cand_list = [{"name": c.canonical_name, "type": c.entity_type,
+                              "description": c.description, "cosine": round(c.cos, 3)} for c in cands[:5]]
+                decision = _llm_entity_link(name, etype, description, cand_list, context_text)
+                if decision.get("reuse") and decision.get("entity_name"):
+                    # LLM 判定复用:找到对应的 entity_id
+                    for c in cands:
+                        if c.canonical_name == decision["entity_name"]:
+                            return str(c.entity_id)
+                # LLM 判定新建 or 无法判定 → 新建
+            except Exception:  # noqa: BLE001 LLM 不可用 → 保守新建
+                pass
+        # 无 LLM 或 LLM 判定新建:保守新建(不错误合并)
     # 新建
     eid = conn.execute(text("""
         INSERT INTO entities (scope, canonical_name, entity_type, description, embedding)
@@ -75,13 +92,59 @@ def _resolve_or_create(conn, scope: str, name: str, etype: Optional[str],
     return str(eid)
 
 
-def _close_superseded(conn, scope: str, subject_id: str, predicate: str, valid_from: str) -> int:
-    """超替:把同 (subject,predicate) 的当前活 fact 的 valid_to 闭合为 valid_from。"""
-    r = conn.execute(text("""
-        UPDATE facts SET valid_to = CAST(:vf AS timestamptz)
-        WHERE scope=:s AND subject_id=CAST(:sub AS uuid) AND predicate=:p
-        AND valid_to IS NULL AND recorded_to IS NULL
-    """), {"s": scope, "sub": subject_id, "p": predicate, "vf": valid_from})
+def _llm_entity_link(name: str, etype: Optional[str], description: str,
+                     candidates: List[Dict], context_text: str) -> Dict[str, Any]:
+    """LLM 灰区判定:给定新实体 + 候选列表 + 原文上下文,决定复用哪个还是新建。
+    返回 {reuse: bool, entity_name: str|None, reason: str}。"""
+    from ..prompts import ENTITY_LINK_SYSTEM
+    import json as _j
+    payload = _j.dumps({
+        "new_entity": {"name": name, "type": etype, "description": description},
+        "candidates": candidates,
+        "context": context_text[:2000],  # 截取上下文(超长时)
+    }, ensure_ascii=False)
+    raw = services.llm_chat("extraction", ENTITY_LINK_SYSTEM, payload, max_tokens=1024)
+    data = services.parse_llm_json(raw)
+    return {"reuse": data.get("reuse", False),
+            "entity_name": data.get("entity_name"),
+            "reason": data.get("reason", "")}
+
+
+# 单值谓词:新 fact 到达时闭合旧 fact(超替)。
+# 多值谓词:天然允许多条共存,不超替(has_component/caused_by/has_symptom/correlates_with 等)。
+_SINGLE_VALUE_PREDICATES = {
+    "has_status", "deal_stage", "renewed_arr", "has_policy", "has_quota",
+    "configured_as", "valid_value",
+}
+
+
+def _is_single_value(predicate: str) -> bool:
+    """判断谓词是否单值(新值到达应超替旧值)。多值谓词允许多条共存。"""
+    return predicate in _SINGLE_VALUE_PREDICATES
+
+
+def _close_superseded(conn, scope: str, subject_id: str, predicate: str,
+                      valid_from: str, object_value: Optional[str] = None) -> int:
+    """超替:仅对单值谓词,把同 (subject,predicate) 的当前活 fact 的 valid_to 闭合。
+    多值谓词(has_component/caused_by/has_symptom/correlates_with 等)不超替,允许多条共存。
+    对单值谓词,如果 object 也匹配(传了 object_value),只闭合完全相同的;否则闭合所有同谓词的。"""
+    if not _is_single_value(predicate):
+        return 0  # 多值谓词:不超替
+    if object_value:
+        # 精确匹配同 subject+predicate+object 的活 fact
+        r = conn.execute(text("""
+            UPDATE facts SET valid_to = CAST(:vf AS timestamptz)
+            WHERE scope=:s AND subject_id=CAST(:sub AS uuid) AND predicate=:p
+            AND valid_to IS NULL AND recorded_to IS NULL
+            AND ((object_type='entity' AND object_entity_id=CAST(:ov AS uuid))
+                 OR (object_type='literal' AND object_value->>'value'=:ov))
+        """), {"s": scope, "sub": subject_id, "p": predicate, "vf": valid_from, "ov": object_value})
+    else:
+        r = conn.execute(text("""
+            UPDATE facts SET valid_to = CAST(:vf AS timestamptz)
+            WHERE scope=:s AND subject_id=CAST(:sub AS uuid) AND predicate=:p
+            AND valid_to IS NULL AND recorded_to IS NULL
+        """), {"s": scope, "sub": subject_id, "p": predicate, "vf": valid_from})
     return r.rowcount or 0
 
 
@@ -159,7 +222,7 @@ def extract_event(event_id: str) -> Dict[str, Any]:
         for ent in extraction.get("entities", []):
             ent_map[ent["name"].lower()] = _resolve_or_create(
                 conn, scope, ent["name"], ent.get("type"), ent.get("description", ent["name"]),
-                thresholds, model)
+                thresholds, model, context_text=text_body)
 
         fact_ids: List[str] = []
         for f in extraction.get("facts", []):
@@ -168,21 +231,23 @@ def extract_event(event_id: str) -> Dict[str, Any]:
                 continue
             pred = coerce_value(conn, scope, "predicate", f["predicate"]) or f["predicate"]
             obj_type = f.get("object_type", "entity")
+            fact_conf = float(f.get("confidence", 0.8)) if f.get("confidence") else 0.8
+            fact_vf = f.get("valid_from") or observed_at
             if obj_type == "entity":
                 obj_eid = ent_map.get(f["object"].lower())
                 if not obj_eid:
                     continue
-                _close_superseded(conn, scope, subj, pred, observed_at)
+                _close_superseded(conn, scope, subj, pred, fact_vf, f["object"])
                 fid = _insert_fact(conn, scope=scope, subject_id=subj, predicate=pred,
                                    object_type="entity", object_entity_id=obj_eid, object_value=None,
-                                   valid_from=observed_at, confidence=0.8, supports=[event_id], model=model)
+                                   valid_from=fact_vf, confidence=fact_conf, supports=[event_id], model=model)
             else:
                 val = coerce_value(conn, scope, _guess_vocab(pred), f["object"])
                 obj_value = {"datatype": "string", "value": val}
-                _close_superseded(conn, scope, subj, pred, observed_at)
+                _close_superseded(conn, scope, subj, pred, fact_vf, val)
                 fid = _insert_fact(conn, scope=scope, subject_id=subj, predicate=pred,
                                    object_type="literal", object_entity_id=None, object_value=obj_value,
-                                   valid_from=observed_at, confidence=0.8, supports=[event_id], model=model)
+                                   valid_from=fact_vf, confidence=fact_conf, supports=[event_id], model=model)
             fact_ids.append(fid)
 
         if fact_ids:
@@ -200,6 +265,35 @@ def extract_event(event_id: str) -> Dict[str, Any]:
 def _guess_vocab(predicate: str) -> str:
     """字面值 fact 的 object 可能属于某词表;猜词表名=谓词名。"""
     return predicate  # 无词表则原样(coerce 返回 raw)
+
+
+def _compute_belief_confidence(conn, scope: str, subj_id: str, fact_ids: List[str]) -> float:
+    """基于证据质量计算 belief 置信度(非固定值):
+    基础分 = fact 平均 confidence,加权:
+      + 独立来源数(不同 event 来源 +0.1 每个)
+      + 因果谓词质量(caused_by/correlates_with +0.05)
+      + 排除项支持(ruled_out/confirmed_by +0.05)
+    上限 0.95,下限 0.1。"""
+    if not fact_ids:
+        return 0.5
+    # fact avg confidence
+    avg_conf = conn.execute(text("""
+        SELECT avg(confidence) FROM facts
+        WHERE fact_id = ANY(CAST(:ids AS uuid[])) AND scope=:s
+    """), {"ids": "{" + ",".join(fact_ids) + "}", "s": scope}).scalar() or 0.7
+    # 独立来源数(不同 event)
+    n_sources = conn.execute(text("""
+        SELECT count(DISTINCT unnest(supports)) FROM facts
+        WHERE fact_id = ANY(CAST(:ids AS uuid[])) AND scope=:s
+    """), {"ids": "{" + ",".join(fact_ids) + "}", "s": scope}).scalar() or 0
+    # 因果/相关谓词 bonus
+    n_diag = conn.execute(text("""
+        SELECT count(*) FROM facts
+        WHERE fact_id = ANY(CAST(:ids AS uuid[])) AND scope=:s
+        AND predicate IN ('caused_by','correlates_with','confirmed_by','supports')
+    """), {"ids": "{" + ",".join(fact_ids) + "}", "s": scope}).scalar() or 0
+    confidence = avg_conf + 0.1 * min(n_sources, 3) + 0.05 * min(n_diag, 3)
+    return min(0.95, max(0.1, round(confidence, 3)))
 
 
 def _aggregate_belief_for_scope(scope: str) -> int:
@@ -224,10 +318,11 @@ def _aggregate_belief_for_scope(scope: str) -> int:
             fids = [x[0] for x in conn.execute(text(
                 "SELECT fact_id::text FROM facts WHERE scope=:s AND subject_id=CAST(:a AS uuid) AND valid_to IS NULL AND recorded_to IS NULL"),
                 {"s": scope, "a": subj_id}).fetchall()]
+            conf = _compute_belief_confidence(conn, scope, subj_id, fids)
             conn.execute(text("""INSERT INTO beliefs (scope, about_entity_id, stance, claim, confidence, supports, valid_from)
-                VALUES (:s,CAST(:a AS uuid),'likely_true',:claim,0.7,CAST(:sup AS uuid[]),CAST(:vf AS timestamptz))"""),
+                VALUES (:s,CAST(:a AS uuid),'likely_true',:claim,:conf,CAST(:sup AS uuid[]),CAST(:vf AS timestamptz))"""),
                 {"s": scope, "a": subj_id, "claim": f"{name} is associated with {cnt} observed facts",
-                 "sup": "{" + ",".join(fids) + "}", "vf": vf or "now()"})
+                 "conf": conf, "sup": "{" + ",".join(fids) + "}", "vf": vf or "now()"})
             n += 1
     return n
 
