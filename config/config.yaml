@@ -3,10 +3,7 @@
 # 启动时强制校验:embedding.dimension 必须 == entities.embedding 的 vector(N)=1024,不一致拒启动。
 
 database:
-  # 经 localhost 代理(scripts/db_proxy.py,系统 python 跑)转发到 192.168.1.21:5432。
-  # 原因:macOS 本地网络授权挡住 uv 的 3.12 python 直连 .21;localhost 不受限。
-  # 启动顺序:先 `python3 scripts/db_proxy.py`,再起 app/worker。
-  url: postgresql://postgres:0prV2JrQ1uJSBHZ2@127.0.0.1:5433/postgres
+  url: postgresql://postgres:0prV2JrQ1uJSBHZ2@192.168.1.21:5432/postgres
   schema: cortex
 
 embedding:

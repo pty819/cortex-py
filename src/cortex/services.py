@@ -61,15 +61,19 @@ def _llm_client(tier: str):
     return client, cfg["model"], cfg
 
 
-def llm_chat(tier: str, system: str, user: str, response_format: Optional[Dict] = None) -> str:
-    """同步调 LLM;返回 assistant 文本。无 key 抛 LLMUnavailable。"""
+def llm_chat(tier: str, system: str, user: str,
+             response_format: Optional[Dict] = None,
+             max_tokens: int = 16384) -> str:
+    """同步调 LLM;返回 assistant 文本。max_tokens 默认 16384(推理模型需要大量 think+输出空间)。
+    不设 max_tokens 会被 API 默认值(~2000)截断复杂抽取的推理+JSON。"""
     c = _llm_client(tier)
     if c is None:
         raise LLMUnavailable(f"LLM tier '{tier}' 无 key(配置占位符)。")
     client, model, _ = c
     kwargs: Dict[str, Any] = {"model": model, "messages": [{"role": "system", "content": system},
                                                            {"role": "user", "content": user}],
-                              "temperature": 0.0}
+                              "temperature": 0.0,
+                              "max_tokens": max_tokens}
     if response_format:
         kwargs["response_format"] = response_format
     resp = client.chat.completions.create(**kwargs)
