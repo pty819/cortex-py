@@ -16,7 +16,7 @@ import time
 
 import httpx
 
-PORT = 8002
+PORT = 8000
 URL = f"http://127.0.0.1:{PORT}/mcp"
 SCOPE_A = "org:mcp/user:alice"
 SCOPE_B = "org:mcp/user:bob"
@@ -45,10 +45,12 @@ async def with_client(scope, fn):
     from mcp.client.streamable_http import streamablehttp_client
     headers = {"X-Cortex-Scope": scope}
     async with streamablehttp_client(URL, headers=headers) as streams:
-        # SDK 版本差异:可能 2 元或 3 元
         r, w = streams[0], streams[1]
         async with ClientSession(r, w) as session:
-            await session.initialize()
+            try:
+                await session.initialize()
+            except Exception as e:
+                raise RuntimeError(f"session.initialize failed: {e}") from e
             return await fn(session)
 
 

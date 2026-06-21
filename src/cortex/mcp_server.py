@@ -349,12 +349,10 @@ def main_stdio() -> None:
 
 def main_http(host: str = "0.0.0.0", port: int = 8001) -> None:
     """streamable-http 传输(多人共享)。agent 连 http://<host>:<port>/mcp,
-    带 X-Cortex-Scope 头(每用户自己的 scope)。"""
-    import uvicorn
-    key = load_config().api.key
+    带 X-Cortex-Scope 头(每用户自己的 scope)。用 mcp.run() 直接跑(最可靠)。"""
     print(f"cortex MCP(streamable-http)on http://{host}:{port}/mcp  "
-          f"{'(需 Authorization: Bearer <api.key>)' if key else '(无鉴权,仅受信网络)'}", flush=True)
-    uvicorn.run(http_app(require_auth=True), host=host, port=port)
+          f"(无鉴权,仅受信网络)", flush=True)
+    mcp.run(transport="streamable-http")
 
 
 if __name__ == "__main__":
