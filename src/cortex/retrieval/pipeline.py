@@ -89,8 +89,8 @@ def _chan_bm25(conn, scope: str, view: str, query: str, top_k: int,
     sql = f"""
         SELECT fact_id::text FROM facts
         WHERE {frag} AND {tc}
-          AND to_tsvector('english', coalesce(predicate,'')||' '||coalesce(object_value->>'value','')||' '||coalesce((SELECT canonical_name FROM entities WHERE entity_id=facts.subject_id),'')) @@ plainto_tsquery(:q)
-        ORDER BY ts_rank(to_tsvector('english',coalesce(predicate,'')||' '||coalesce(object_value->>'value','')), plainto_tsquery(:q)) DESC
+          AND to_tsvector('simple', coalesce(predicate,'')||' '||coalesce(object_value->>'value','')||' '||coalesce((SELECT canonical_name FROM entities WHERE entity_id=facts.subject_id),'')) @@ plainto_tsquery(:q)
+        ORDER BY ts_rank(to_tsvector('simple',coalesce(predicate,'')||' '||coalesce(object_value->>'value','')), plainto_tsquery(:q)) DESC
         LIMIT :k
     """
     return [r[0] for r in conn.execute(text(sql), p).fetchall()]
@@ -152,8 +152,8 @@ def _expand_synonyms(conn, scope: str, query: str,
     expanded = " ".join(sorted(terms))
     rows = conn.execute(text("""
         SELECT fact_id::text FROM facts
-        WHERE scope=:s AND valid_to IS NULL AND recorded_to IS NULL
-          AND to_tsvector('english', coalesce(predicate,'')||' '||coalesce(object_value->>'value',''))
+        WHERE scope=:s AND """ + _tc + """
+          AND to_tsvector('simple', coalesce(predicate,'')||' '||coalesce(object_value->>'value',''))
               @@ plainto_tsquery(:q) LIMIT :k
     """), {**{"s": scope, "q": expanded, "k": 40}, **_tp}).fetchall()
     return [r[0] for r in rows]

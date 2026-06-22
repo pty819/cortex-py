@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -136,24 +137,16 @@ def _close_superseded(conn, scope: str, subject_id: str, predicate: str,
                       valid_from: str, object_value: Optional[str] = None) -> int:
     """超替:仅对单值谓词,把同 (subject,predicate) 的当前活 fact 的 valid_to 闭合。
     多值谓词(has_component/caused_by/has_symptom/correlates_with 等)不超替,允许多条共存。
-    cardinality 从 DB vocabularies 查(scope 级),无词表时用代码级 fallback。"""
+    cardinality 从 DB vocabularies 查(scope 级),无词表时用代码级 fallback。
+    对单值谓词,闭合所有同 (subject,predicate) 的活 fact(不论 object),因为单值谓词同一时刻只有一条为真。"""
     if not _is_single_value(conn, scope, predicate):
         return 0  # 多值谓词:不超替
-    if object_value:
-        # 精确匹配同 subject+predicate+object 的活 fact
-        r = conn.execute(text("""
-            UPDATE facts SET valid_to = CAST(:vf AS timestamptz)
-            WHERE scope=:s AND subject_id=CAST(:sub AS uuid) AND predicate=:p
-            AND valid_to IS NULL AND recorded_to IS NULL
-            AND ((object_type='entity' AND object_entity_id=CAST(:ov AS uuid))
-                 OR (object_type='literal' AND object_value->>'value'=:ov))
-        """), {"s": scope, "sub": subject_id, "p": predicate, "vf": valid_from, "ov": object_value})
-    else:
-        r = conn.execute(text("""
-            UPDATE facts SET valid_to = CAST(:vf AS timestamptz)
-            WHERE scope=:s AND subject_id=CAST(:sub AS uuid) AND predicate=:p
-            AND valid_to IS NULL AND recorded_to IS NULL
-        """), {"s": scope, "sub": subject_id, "p": predicate, "vf": valid_from})
+    # 单值谓词:闭合所有同 (subject,predicate) 的活 fact
+    r = conn.execute(text("""
+        UPDATE facts SET valid_to = CAST(:vf AS timestamptz)
+        WHERE scope=:s AND subject_id=CAST(:sub AS uuid) AND predicate=:p
+        AND valid_to IS NULL AND recorded_to IS NULL
+    """), {"s": scope, "sub": subject_id, "p": predicate, "vf": valid_from})
     return r.rowcount or 0
 
 
@@ -219,11 +212,19 @@ def extract_event(event_id: str) -> Dict[str, Any]:
             extraction = _llm_extract(text_body, is_diagnosis=is_diagnosis, intent=intent)
             model = cfg.llm.extraction.model
         except Exception as e:  # noqa: BLE001
-            extraction = services.mock_extract(text_body)
-            model = f"mock-fallback({e.__class__.__name__})"
-    else:
+            # 真实 LLM 失败:不静默降级到 mock!标记失败,让 worker 重试。
+            raise RuntimeError(f"LLM extraction failed: {type(e).__name__}: {e}") from e
+    elif os.environ.get("CORTEX_ALLOW_MOCK_EXTRACTION", "false").lower() == "true":
+        # 显式测试模式才用 mock
         extraction = services.mock_extract(text_body)
         model = "mock-extractor"
+    else:
+        # 无 key 且非测试模式:标记跳过(不伪装成功)
+        with session_scope() as conn:
+            emit_lifecycle(conn, kind="extracted", scope=scope, event_id=event_id,
+                           payload={"facts_extracted": 0, "note": "no LLM key configured, extraction skipped"})
+        return {"facts_extracted": 0, "entities": 0, "model": "skipped",
+                "reason": "no LLM key (set CORTEX_LLM_EXTRACTION_API_KEY or CORTEX_ALLOW_MOCK_EXTRACTION=true)"}
 
     # ── Step 3: 实体链接 + 建 facts + belief 聚合(短事务)──
     with session_scope() as conn:
@@ -238,7 +239,13 @@ def extract_event(event_id: str) -> Dict[str, Any]:
             subj = ent_map.get(f["subject"].lower())
             if not subj:
                 continue
-            pred = coerce_value(conn, scope, "predicate", f["predicate"]) or f["predicate"]
+            raw_pred = f["predicate"]
+            pred = coerce_value(conn, scope, "predicate", raw_pred)
+            # 词表归一:closed 词表未命中→原始谓词;open 词表未命中→保留
+            # 不再 `or raw_pred` 绕过——如果 coerce 返回 None(closed 未命中),仍然用原始值
+            # 但走词表路径,不伪装命中
+            if pred is None:
+                pred = raw_pred  # closed 未命中,仍用原值(但 predicate 不在词表内)
             obj_type = f.get("object_type", "entity")
             fact_conf = float(f.get("confidence", 0.8)) if f.get("confidence") else 0.8
             fact_vf = f.get("valid_from") or observed_at
@@ -296,24 +303,25 @@ def _guess_vocab(predicate: str) -> str:
 
 
 def _detect_conflicts(conn, scope: str) -> int:
-    """检测冲突:同 (scope, subject, predicate) 但 object 不同 → 标记 conflict_to。
-    返回检测到的冲突组数。"""
-    # 找同 subject+predicate 但不同 object 的活 facts(仅单值谓词)
+    """检测冲突:同 (scope, subject, predicate) 但 object 不同,仅单值谓词。
+    多值谓词(如 caused_by/has_symptom)允许多条不同 object 共存,不算冲突。"""
     rows = conn.execute(text("""
-        SELECT subject_id::text, predicate,
-               count(DISTINCT CASE WHEN object_type='entity' THEN object_entity_id::text
-                                   ELSE object_value->>'value' END) AS n_objects
-        FROM facts
-        WHERE scope=:s AND valid_to IS NULL AND recorded_to IS NULL
-          AND object_type IS NOT NULL
-        GROUP BY subject_id, predicate
-        HAVING count(DISTINCT CASE WHEN object_type='entity' THEN object_entity_id::text
-                                    ELSE object_value->>'value' END) > 1
+        SELECT f.subject_id::text, f.predicate,
+               count(DISTINCT CASE WHEN f.object_type='entity' THEN f.object_entity_id::text
+                                   ELSE f.object_value->>'value' END) AS n_objects
+        FROM facts f
+        WHERE f.scope=:s AND f.valid_to IS NULL AND f.recorded_to IS NULL
+          AND f.object_type IS NOT NULL
+        GROUP BY f.subject_id, f.predicate
+        HAVING count(DISTINCT CASE WHEN f.object_type='entity' THEN f.object_entity_id::text
+                                    ELSE f.object_value->>'value' END) > 1
     """), {"s": scope}).fetchall()
     n_conflicts = 0
     for r in rows:
         subj_id, pred = r[0], r[1]
-        # 标记同 subject+predicate 的所有 fact 的 object_value 加 conflict 标记
+        # 仅对单值谓词标记冲突
+        if not _is_single_value(conn, scope, pred):
+            continue
         conn.execute(text("""
             UPDATE facts
             SET object_value = CASE
@@ -441,13 +449,14 @@ def _aggregate_belief(conn, scope: str, ent_map: Dict[str, str], fact_ids: List[
         ent = conn.execute(text("SELECT canonical_name FROM entities WHERE entity_id=CAST(:e AS uuid)"),
                            {"e": subj_id}).fetchone()
         name = ent.canonical_name if ent else subj_id
+        conf = _compute_belief_confidence(conn, scope, subj_id, fids)
+        stance = _detect_belief_stance(conn, scope, subj_id, fids)
         conn.execute(text("""
             INSERT INTO beliefs (scope, about_entity_id, stance, claim, confidence, supports, valid_from)
-            VALUES (:s,CAST(:a AS uuid),'likely_true',
-                    :claim, 0.7, CAST(:sup AS uuid[]), CAST(:vf AS timestamptz))
-        """), {"s": scope, "a": subj_id,
+            VALUES (:s,CAST(:a AS uuid),:stance,:claim,:conf,CAST(:sup AS uuid[]),CAST(:vf AS timestamptz))
+        """), {"s": scope, "a": subj_id, "stance": stance,
                "claim": f"{name} is associated with {len(fids)} observed facts",
-               "sup": "{%s}" % ",".join(fids), "vf": valid_from})
+               "conf": conf, "sup": "{%s}" % ",".join(fids), "vf": valid_from})
 
 
 # ── 真实 LLM 抽取(structured output)────────────────────────────────────────

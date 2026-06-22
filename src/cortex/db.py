@@ -5,6 +5,7 @@ schema 以 src/cortex/schema.sql 为单一真相源(避免 ORM 与 DDL 漂移)�
 """
 from __future__ import annotations
 
+import os
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -35,12 +36,14 @@ def get_engine():
 @contextmanager
 def session_scope():
     """事务 session 上下文(成功 commit / 异常 rollback)。
-    OperationalError 时 invalidate 连接,强制池丢弃(防中毒连接复用)。"""
+    OperationalError 时 invalidate 连接,强制池丢弃(防中毒连接复用)。
+    测试时可通过 CORTEX_DB_SCHEMA_OVERRIDE 环境变量切换到独立 test schema。"""
     eng = get_engine()
+    schema = os.environ.get("CORTEX_DB_SCHEMA_OVERRIDE", "cortex")
     conn = eng.connect()
     tx = conn.begin()
     try:
-        conn.execute(text("SET search_path = cortex, public"))
+        conn.execute(text(f"SET search_path = {schema}, public"))
         yield conn
         tx.commit()
     except OperationalError:

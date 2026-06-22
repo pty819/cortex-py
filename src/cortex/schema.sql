@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_scope_observed ON cortex.events (scope, observed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_observed_at    ON cortex.events (observed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_wal_offset     ON cortex.events (wal_offset);
-CREATE INDEX IF NOT EXISTS idx_events_content_fts    ON cortex.events USING gin (to_tsvector('english', content->>'text'));
+CREATE INDEX IF NOT EXISTS idx_events_content_fts    ON cortex.events USING gin (to_tsvector('simple', content->>'text'));
 
 -- ── entities: B over C 载体(03 §2)────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS entities (
@@ -86,7 +86,7 @@ CREATE INDEX IF NOT EXISTS idx_facts_subj_pred_valid ON cortex.facts (scope, sub
 CREATE INDEX IF NOT EXISTS idx_facts_scope_conf      ON cortex.facts (scope, confidence DESC)             WHERE valid_to IS NULL AND recorded_to IS NULL;
 -- facts 内容全文索引(供 facts 通道 BM25)
 CREATE INDEX IF NOT EXISTS idx_facts_text_fts ON cortex.facts USING gin (
-    to_tsvector('english', coalesce(predicate,'') || ' ' || coalesce(object_value->>'value',''))
+    to_tsvector('simple', coalesce(predicate,'') || ' ' || coalesce(object_value->>'value',''))
 );
 
 -- ── beliefs(03 §5)─────────────────────────────────────────────────────────

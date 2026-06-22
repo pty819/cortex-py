@@ -139,7 +139,7 @@ def update_case(episode_id: str, **fields) -> Dict[str, Any]:
 def add_event_to_case(episode_id: str, event_id: str) -> Dict[str, Any]:
     """把 event 关联到 case:更新 events.case_id + episodes.event_ids。"""
     with session_scope() as conn:
-        ep = conn.execute(text("SELECT scope, event_ids::text[] FROM episodes WHERE episode_id=CAST(:e AS uuid)"),
+        ep = conn.execute(text("SELECT scope, event_ids::text[], case_id FROM episodes WHERE episode_id=CAST(:e AS uuid)"),
                           {"e": episode_id}).fetchone()
         if not ep:
             return {"error": "case not found"}
@@ -150,8 +150,9 @@ def add_event_to_case(episode_id: str, event_id: str) -> Dict[str, Any]:
         conn.execute(text("""
             UPDATE episodes SET event_ids = CAST(:ids AS uuid[]) WHERE episode_id=CAST(:e AS uuid)
         """), {"ids": "{" + ",".join(new_ids) + "}", "e": episode_id})
+        # 写 events.case_id: 优先用业务 case_id,无则用 episode_id
         conn.execute(text("UPDATE events SET case_id=:cid WHERE event_id=CAST(:e AS uuid)"),
-                     {"cid": episode_id, "e": event_id})
+                     {"cid": ep[2] or episode_id, "e": event_id})
     return {"episode_id": episode_id, "event_id": event_id, "added": True}
 
 

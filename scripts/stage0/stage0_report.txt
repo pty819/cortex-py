@@ -1,5 +1,5 @@
 cortex-py 阶段 0 冒烟报告
-生成: 2026-06-22T12:54:57
+生成: 2026-06-22T14:50:28
 DB: 192.168.1.21:5432/postgres
 结果: PASS=37  FAIL=0  FILE_ERRORS=0
 
@@ -53,7 +53,7 @@ DB: 192.168.1.21:5432/postgres
   PASS: 3-hop BFS reaches same 2 nodes (graph converges)
   PASS: predicate filter [owns] from Acme → 0 (Acme has no owns out-edge)
   PASS: reverse lookup works_at Acme → 1 subject(s)
-  PERF: 2-hop BFS = 5.44 ms ; 3-hop BFS = 3.83 ms (seed graph; 10k-facts baseline in decision_probe: 5.47/6.94 ms)
+  PERF: 2-hop BFS = 0.65 ms ; 3-hop BFS = 0.44 ms (seed graph; 10k-facts baseline in decision_probe: 5.47/6.94 ms)
 
 ==============================================================================
 >>> 05_entity_resolution.sql
@@ -74,7 +74,7 @@ DB: 192.168.1.21:5432/postgres
   PASS: holistic from alice → 3 prefixes, 8 facts (org+dept+user all visible)
   PASS: descend from org:acme → 4 distinct scopes visible
   PASS: structured view returns facts=9 beliefs=1 (events skipped) for scope A
-  PERF: holistic via TEXT ANY(prefix) = 0.442 ms ; ltree @> = 0.368 ms (decision: TEXT, holistic is the hot path)
+  PERF: holistic via TEXT ANY(prefix) = 0.185 ms ; ltree @> = 0.149 ms (decision: TEXT, holistic is the hot path)
 
 ==============================================================================
 >>> 07_queue_demo.sql
