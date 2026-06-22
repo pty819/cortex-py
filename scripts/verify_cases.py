@@ -1,6 +1,11 @@
 """验证 Case CRUD: create → update → add_event → get → list → search。"""
 from __future__ import annotations
 
+import os
+import uuid
+
+os.environ.setdefault("CORTEX_DB_SCHEMA_OVERRIDE", f"cortex_test_verify_cases_{uuid.uuid4().hex[:8]}")
+
 from fastapi.testclient import TestClient
 from cortex.api.app import app
 from cortex.db import init_schema

@@ -22,9 +22,11 @@ CREATE TABLE IF NOT EXISTS events (
     idempotency_key     TEXT NOT NULL,
     excluded_from_recall BOOLEAN NOT NULL DEFAULT false,
     embed_status        TEXT,
+    extraction_diagnostics JSONB NOT NULL DEFAULT '[]',
     access_count        INT NOT NULL DEFAULT 0,
     UNIQUE (scope, idempotency_key)
 );
+ALTER TABLE cortex.events ADD COLUMN IF NOT EXISTS extraction_diagnostics JSONB NOT NULL DEFAULT '[]';
 CREATE INDEX IF NOT EXISTS idx_events_scope_observed ON cortex.events (scope, observed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_observed_at    ON cortex.events (observed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_wal_offset     ON cortex.events (wal_offset);
@@ -37,12 +39,16 @@ CREATE TABLE IF NOT EXISTS entities (
     canonical_name     TEXT NOT NULL,
     entity_type        TEXT,
     description        TEXT,
+    identity_context   JSONB NOT NULL DEFAULT '{}',
+    context_key        TEXT NOT NULL DEFAULT '{}',
     embedding          vector(1024),
     merged_into        UUID REFERENCES cortex.entities(entity_id),
     merge_confidence   FLOAT,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE cortex.entities ADD COLUMN IF NOT EXISTS identity_context JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE cortex.entities ADD COLUMN IF NOT EXISTS context_key TEXT NOT NULL DEFAULT '{}';
 CREATE INDEX IF NOT EXISTS idx_entities_embedding   ON cortex.entities USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS idx_entities_scope_name  ON cortex.entities (scope, canonical_name) WHERE merged_into IS NULL;
 CREATE INDEX IF NOT EXISTS idx_entities_scope_type  ON cortex.entities (scope, entity_type)   WHERE merged_into IS NULL;
@@ -55,8 +61,10 @@ CREATE TABLE IF NOT EXISTS entity_aliases (
     alias_type    TEXT,
     scope         TEXT NOT NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (scope, alias)
+    UNIQUE (entity_id, alias)
 );
+ALTER TABLE cortex.entity_aliases DROP CONSTRAINT IF EXISTS entity_aliases_scope_alias_key;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_aliases_entity_alias ON cortex.entity_aliases(entity_id, alias);
 CREATE INDEX IF NOT EXISTS idx_aliases_scope_alias ON cortex.entity_aliases (scope, alias);
 CREATE INDEX IF NOT EXISTS idx_aliases_entity      ON cortex.entity_aliases (entity_id);
 
@@ -74,16 +82,43 @@ CREATE TABLE IF NOT EXISTS facts (
     recorded_from    TIMESTAMPTZ NOT NULL DEFAULT now(),
     recorded_to      TIMESTAMPTZ,
     confidence       FLOAT NOT NULL DEFAULT 0.5 CHECK (confidence >= 0 AND confidence <= 1),
+    polarity         TEXT NOT NULL DEFAULT 'positive' CHECK (polarity IN ('positive','negative')),
+    assertion_status TEXT NOT NULL DEFAULT 'observed'
+                     CHECK (assertion_status IN ('observed','hypothesized','confirmed','ruled_out','rejected')),
+    evidence_span    TEXT,
     supports         UUID[] NOT NULL DEFAULT '{}',
     extracted_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     extraction_model TEXT,
     CHECK (object_type = 'entity' AND object_entity_id IS NOT NULL
         OR object_type = 'literal' AND object_value IS NOT NULL)
 );
+ALTER TABLE cortex.facts ADD COLUMN IF NOT EXISTS polarity TEXT NOT NULL DEFAULT 'positive';
+ALTER TABLE cortex.facts ADD COLUMN IF NOT EXISTS assertion_status TEXT NOT NULL DEFAULT 'observed';
+ALTER TABLE cortex.facts ADD COLUMN IF NOT EXISTS evidence_span TEXT;
+DO $$ BEGIN
+    ALTER TABLE cortex.facts ADD CONSTRAINT facts_polarity_check
+        CHECK (polarity IN ('positive','negative'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+    ALTER TABLE cortex.facts ADD CONSTRAINT facts_assertion_status_check
+        CHECK (assertion_status IN ('observed','hypothesized','confirmed','ruled_out','rejected'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- 保守 backfill：旧因果边只能降为 hypothesis；没有机器可识别确认 provenance 时绝不升级 confirmed。
+UPDATE cortex.facts SET polarity='positive' WHERE polarity IS NULL;
+UPDATE cortex.facts SET assertion_status=CASE
+    WHEN predicate IN ('affects','cascades_to','caused_by','contributes_to','correlates_with','has_symptom','led_to','suggests','symptom_of','triggers') THEN 'hypothesized'
+    ELSE 'observed' END
+WHERE assertion_status IS NULL OR (assertion_status='observed' AND predicate IN
+    ('affects','cascades_to','caused_by','contributes_to','correlates_with','has_symptom','led_to','suggests','symptom_of','triggers'));
 CREATE INDEX IF NOT EXISTS idx_facts_subject         ON cortex.facts (scope, subject_id, predicate)       WHERE valid_to IS NULL AND recorded_to IS NULL;
 CREATE INDEX IF NOT EXISTS idx_facts_object          ON cortex.facts (scope, object_entity_id, predicate) WHERE valid_to IS NULL AND recorded_to IS NULL;
 CREATE INDEX IF NOT EXISTS idx_facts_subj_pred_valid ON cortex.facts (scope, subject_id, predicate, valid_from) WHERE recorded_to IS NULL;
 CREATE INDEX IF NOT EXISTS idx_facts_scope_conf      ON cortex.facts (scope, confidence DESC)             WHERE valid_to IS NULL AND recorded_to IS NULL;
+CREATE INDEX IF NOT EXISTS idx_facts_graph_eligible ON cortex.facts (scope, subject_id, predicate)
+WHERE recorded_to IS NULL AND polarity='positive'
+  AND predicate NOT IN ('contradicts','no_correlation','ruled_out')
+  AND ((predicate IN ('affects','cascades_to','caused_by','contributes_to','correlates_with','has_symptom','led_to','suggests','symptom_of','triggers') AND assertion_status='confirmed')
+       OR (predicate NOT IN ('affects','cascades_to','caused_by','contributes_to','correlates_with','has_symptom','led_to','suggests','symptom_of','triggers') AND assertion_status IN ('observed','confirmed')));
 -- facts 内容全文索引(供 facts 通道 BM25)
 CREATE INDEX IF NOT EXISTS idx_facts_text_fts ON cortex.facts USING gin (
     to_tsvector('simple', coalesce(predicate,'') || ' ' || coalesce(object_value->>'value',''))

@@ -10,8 +10,23 @@ from sqlalchemy import text
 from ..config import load_config
 from ..core import claim_next_job, complete_job, fail_job, reap_zombies, emit_lifecycle
 from ..db import session_scope
+from ..extraction.pipeline import ExtractionConfigurationError
 
 log = logging.getLogger("cortex.worker")
+
+
+def _handle_job_failure(conn, job: dict, error: Exception, backoff_base: int) -> None:
+    terminal = isinstance(error, ExtractionConfigurationError)
+    error_kind = "config_error" if terminal else "processing_error"
+    fail_job(conn, job["job_id"], str(error), backoff_base=backoff_base,
+             terminal=terminal, error_kind=error_kind)
+    if terminal:
+        if job.get("event_id"):
+            conn.execute(text("UPDATE events SET embed_status='failed' WHERE event_id=CAST(:e AS uuid)"),
+                         {"e": job["event_id"]})
+        emit_lifecycle(conn, kind="failed", scope=job["scope"],
+                       event_id=job.get("event_id"), job_id=job["job_id"],
+                       payload={"error_kind": error_kind, "error": str(error)[:500]})
 
 
 def _dispatch(job: dict) -> dict:
@@ -94,7 +109,7 @@ def run_worker(*, max_iterations: int = 0) -> None:
             except Exception as e:  # noqa: BLE001
                 log.warning("[%s] failed %s: %s\n%s", worker_id, job["job_id"], e, traceback.format_exc())
                 with session_scope() as conn:
-                    fail_job(conn, job["job_id"], str(e), backoff_base=cfg.worker.backoff_base_secs)
+                    _handle_job_failure(conn, job, e, cfg.worker.backoff_base_secs)
         except KeyboardInterrupt:
             log.info("worker %s stopping", worker_id)
             return

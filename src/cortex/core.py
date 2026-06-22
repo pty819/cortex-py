@@ -116,13 +116,15 @@ def complete_job(conn, job_id: str, result: Optional[Dict] = None) -> None:
     """), {"r": json.dumps(result) if result else None, "j": job_id})
 
 
-def fail_job(conn, job_id: str, error: str, *, backoff_base: int = 4) -> None:
+def fail_job(conn, job_id: str, error: str, *, backoff_base: int = 4,
+             terminal: bool = False, error_kind: str = "processing_error") -> None:
     """失败:未超 max_attempts → queued+退避;超限 → failed(死信)。"""
     info = conn.execute(text("SELECT attempts, max_attempts FROM jobs WHERE job_id=CAST(:j AS uuid)"),
                         {"j": job_id}).fetchone()
-    if info and info.attempts >= info.max_attempts:
-        conn.execute(text("UPDATE jobs SET status='failed', error=:e WHERE job_id=CAST(:j AS uuid)"),
-                     {"e": error[:500], "j": job_id})
+    if terminal or (info and info.attempts >= info.max_attempts):
+        conn.execute(text("""UPDATE jobs SET status='failed', error=:e, completed_at=now(),
+                            result=CAST(:r AS jsonb) WHERE job_id=CAST(:j AS uuid)"""),
+                     {"e": error[:500], "r": json.dumps({"error_kind": error_kind}), "j": job_id})
     else:
         conn.execute(text("""
             UPDATE jobs SET status='queued', locked_by=NULL, locked_at=NULL,

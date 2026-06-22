@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 
 from sqlalchemy import text
@@ -19,9 +20,9 @@ def _banner(s):
 
 
 def run_smoke() -> int:
-    _banner("0. reset schema")
-    init_schema(drop=True)
-    print("  schema reset (cortex)")
+    _banner("0. initialize schema")
+    init_schema(drop=False)
+    print("  schema initialized (non-destructive)")
 
     scope = "org:acme/dept:sales/user:alice"
     text_body = ("Priya Rao works at Acme Corp. Priya Rao owns Q3 Renewal. "
@@ -36,8 +37,19 @@ def run_smoke() -> int:
     jid = enqueue_job(job_type="extract", scope=scope, event_id=eid)
     print(f"  enqueued extract job={jid}")
 
-    _banner("2. async extraction (mock" + ("" if not llm_configured("extraction") else f"/{load_config().llm.extraction.model}") + ")")
-    res = extract_event(eid)
+    extraction_configured = llm_configured("extraction")
+    _banner("2. async extraction (mock" + ("" if not extraction_configured else f"/{load_config().llm.extraction.model}") + ")")
+    previous_mock_flag = os.environ.get("CORTEX_ALLOW_MOCK_EXTRACTION")
+    if not extraction_configured:
+        os.environ["CORTEX_ALLOW_MOCK_EXTRACTION"] = "true"
+    try:
+        res = extract_event(eid)
+    finally:
+        if not extraction_configured:
+            if previous_mock_flag is None:
+                os.environ.pop("CORTEX_ALLOW_MOCK_EXTRACTION", None)
+            else:
+                os.environ["CORTEX_ALLOW_MOCK_EXTRACTION"] = previous_mock_flag
     print(f"  {res}")
     if res.get("facts_extracted", 0) == 0:
         print("  ⚠️ 0 facts extracted — 抽取/链接可能需调试")

@@ -10,22 +10,13 @@ from typing import Dict, Any
 from sqlalchemy import text
 
 from .db import session_scope
+from .ontology import PREDICATE_CARDINALITY
 
 # ── 诊断场景因果 predicate 预置词表 ─────────────────────────────────────────
 # (predicate, description, cardinality: 'single'=新值超替旧值, 'multi'=多值共存)
 DIAGNOSIS_PREDICATES = [
-    ("caused_by",      "故障由...引起",          "multi"),
-    ("led_to",         "...导致",                "multi"),
-    ("symptom_of",     "是...的症状",            "multi"),
-    ("affects",        "...影响",                "multi"),
-    ("part_of",        "...是...的组成部分",      "multi"),
-    ("has_component",  "...包含",                "multi"),
-    ("has_symptom",    "...表现为",              "multi"),
-    ("repaired_by",    "...被...修复",            "multi"),
-    ("observed_by",    "...被...发现",            "multi"),
-    ("preceded_by",    "...发生在...之后(时序)",  "multi"),
-    ("has_status",     "...状态为",              "single"),  # 单值:新状态超替旧状态
-    ("deal_stage",     "交易阶段",               "single"),
+    (predicate, f"diagnostic relation: {predicate}", cardinality)
+    for predicate, cardinality in sorted(PREDICATE_CARDINALITY.items())
 ]
 
 def seed_diagnosis_vocab(scope: str) -> int:

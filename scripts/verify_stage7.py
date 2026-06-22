@@ -2,6 +2,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
+import uuid
+
+os.environ.setdefault("CORTEX_DB_SCHEMA_OVERRIDE", f"cortex_test_verify7_{uuid.uuid4().hex[:8]}")
+os.environ.setdefault("CORTEX_ALLOW_MOCK_EXTRACTION", "true")
+
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 

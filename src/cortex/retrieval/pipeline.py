@@ -17,6 +17,7 @@ from sqlalchemy import text
 from .. import services
 from ..config import load_config
 from ..db import session_scope
+from ..ontology import CAUSAL_PREDICATES, GRAPH_EXCLUDED_PREDICATES
 from ..prompts import SYNTHESIS_CONTEXT_BLOCK, HYDE_SYSTEM, MULTIHOP_SYSTEM
 
 
@@ -32,8 +33,16 @@ def _scope_filter(scope: str, view: str) -> Tuple[str, Dict[str, Any]]:
 
 def _fact_text(row) -> str:
     subj = row.subject_name or "?"
-    obj = row.object_value.get("value") if row.object_value else (row.object_name or "")
+    obj = (row.object_name or "") if row.object_type == "entity" else (row.object_value or {}).get("value", "")
     return f"{subj} {row.predicate} {obj}"
+
+
+def _graph_eligible_sql(alias: str = "f") -> str:
+    causal = ",".join(f"'{predicate}'" for predicate in sorted(CAUSAL_PREDICATES))
+    excluded = ",".join(f"'{predicate}'" for predicate in sorted(GRAPH_EXCLUDED_PREDICATES))
+    return (f"{alias}.polarity='positive' AND {alias}.predicate NOT IN ({excluded}) AND (({alias}.predicate IN ({causal}) "
+            f"AND {alias}.assertion_status='confirmed') OR ({alias}.predicate NOT IN ({causal}) "
+            f"AND {alias}.assertion_status IN ('observed','confirmed')))" )
 
 
 # ── 时态过滤辅助(通道统一用,支持 as_of / include_superseded)─────────────────
@@ -45,7 +54,8 @@ def _temporal_clause(as_of: Optional[str], include_superseded: bool) -> str:
     if as_of:
         base = "valid_from <= CAST(:ao AS timestamptz) AND (valid_to IS NULL OR CAST(:ao AS timestamptz) < valid_to)"
         if include_superseded:
-            return base + " AND recorded_from <= CAST(:ao AS timestamptz)"
+            return (base + " AND recorded_from <= CAST(:ao AS timestamptz) "
+                    "AND (recorded_to IS NULL OR CAST(:ao AS timestamptz) < recorded_to)")
         return base + " AND recorded_to IS NULL"
     if not include_superseded:
         return "valid_to IS NULL AND recorded_to IS NULL"
@@ -89,10 +99,14 @@ def _chan_bm25(conn, scope: str, view: str, query: str, top_k: int,
     sql = f"""
         SELECT fact_id::text FROM facts
         WHERE {frag} AND {tc}
-          AND to_tsvector('simple', coalesce(predicate,'')||' '||coalesce(object_value->>'value','')||' '||coalesce((SELECT canonical_name FROM entities WHERE entity_id=facts.subject_id),'')) @@ plainto_tsquery(:q)
+          AND (to_tsvector('simple', coalesce(predicate,'')||' '||coalesce(object_value->>'value','')||' '||coalesce((SELECT canonical_name FROM entities WHERE entity_id=facts.subject_id),'')) @@ plainto_tsquery(:q)
+               OR coalesce(object_value->>'value','') ILIKE :likeq
+               OR coalesce((SELECT canonical_name FROM entities WHERE entity_id=facts.subject_id),'') ILIKE :likeq
+               OR coalesce((SELECT canonical_name FROM entities WHERE entity_id=facts.object_entity_id),'') ILIKE :likeq)
         ORDER BY ts_rank(to_tsvector('simple',coalesce(predicate,'')||' '||coalesce(object_value->>'value','')), plainto_tsquery(:q)) DESC
         LIMIT :k
     """
+    p["likeq"] = f"%{query.strip()}%"
     return [r[0] for r in conn.execute(text(sql), p).fetchall()]
 
 
@@ -109,27 +123,23 @@ def _chan_graph(conn, scope: str, view: str, q_emb: List[float], max_hops: int, 
         ORDER BY embedding <=> CAST(:q AS vector) LIMIT 5
       ),
       graph_walk AS (
-        SELECT f.object_entity_id AS node, f.predicate, 1 AS hop
+        SELECT f.object_entity_id AS node, f.fact_id, 1 AS hop,
+               ARRAY[s.entity_id, f.object_entity_id]::uuid[] AS visited
           FROM facts f, seeds s
          WHERE f.subject_id = s.entity_id AND f.{frag}
            AND f.{tc}
+           AND {_graph_eligible_sql('f')}
            AND f.object_entity_id IS NOT NULL
         UNION ALL
-        SELECT f.object_entity_id, f.predicate, gw.hop + 1
+        SELECT f.object_entity_id, f.fact_id, gw.hop + 1, gw.visited || f.object_entity_id
           FROM facts f JOIN graph_walk gw ON f.subject_id = gw.node
          WHERE f.{frag} AND f.{tc}
+           AND {_graph_eligible_sql('f')}
            AND f.object_entity_id IS NOT NULL
            AND gw.hop < :h
-      ),
-      reachable AS (
-        SELECT entity_id FROM seeds
-        UNION SELECT node FROM graph_walk WHERE node IS NOT NULL
+           AND NOT f.object_entity_id = ANY(gw.visited)
       )
-      SELECT DISTINCT f.fact_id::text FROM facts f
-      WHERE f.{frag} AND f.{tc}
-        AND (f.subject_id IN (SELECT entity_id FROM reachable)
-             OR f.object_entity_id IN (SELECT entity_id FROM reachable))
-      LIMIT :k
+      SELECT DISTINCT fact_id::text FROM graph_walk WHERE hop <= :h LIMIT :k
     """
     return [r[0] for r in conn.execute(text(sql), p).fetchall()]
 
@@ -202,10 +212,11 @@ def _chan_temporal_decay(conn, scope: str, view: str, top_k: int, decay_days: in
     p["k"] = top_k; p["d"] = decay_days
     p.update(_temporal_params(as_of))
     tc = _temporal_clause(as_of, include_superseded)
+    anchor = "CAST(:ao AS timestamptz)" if as_of else "now()"
     sql = f"""
         SELECT fact_id::text FROM facts
         WHERE {frag} AND {tc}
-          AND valid_from >= now() - make_interval(secs => :d * 86400)
+          AND valid_from >= {anchor} - make_interval(secs => :d * 86400)
         ORDER BY valid_from DESC LIMIT :k
     """
     return [r[0] for r in conn.execute(text(sql), p).fetchall()]
@@ -321,7 +332,7 @@ def recall(*, scope: str, query: Optional[str] = None, view: str = "local",
             temporal_where += " AND f.valid_from <= CAST(:ao AS timestamptz) AND (f.valid_to IS NULL OR CAST(:ao AS timestamptz) < f.valid_to)"
             if include_superseded:
                 # include_superseded: 返回历史版本(recorded_from <= as_of),不强制 recorded_to IS NULL
-                temporal_where = " AND f.valid_from <= CAST(:ao AS timestamptz) AND (f.valid_to IS NULL OR CAST(:ao AS timestamptz) < f.valid_to) AND f.recorded_from <= CAST(:ao AS timestamptz)"
+                temporal_where = " AND f.valid_from <= CAST(:ao AS timestamptz) AND (f.valid_to IS NULL OR CAST(:ao AS timestamptz) < f.valid_to) AND f.recorded_from <= CAST(:ao AS timestamptz) AND (f.recorded_to IS NULL OR CAST(:ao AS timestamptz) < f.recorded_to)"
             temporal_params["ao"] = as_of
         else:
             if not include_superseded:
@@ -338,7 +349,8 @@ def recall(*, scope: str, query: Optional[str] = None, view: str = "local",
         rows = conn.execute(text(f"""
             SELECT f.fact_id::text, f.scope, f.predicate, f.object_type, f.object_value,
                    f.object_entity_id::text, f.subject_id::text, f.confidence,
-                   f.valid_from::text, f.valid_to::text,
+                   f.valid_from::text, f.valid_to::text, f.supports::text[] AS supports,
+                   f.polarity, f.assertion_status, f.evidence_span,
                    s.canonical_name AS subject_name, o.canonical_name AS object_name
             FROM facts f LEFT JOIN entities s ON s.entity_id=f.subject_id
                          LEFT JOIN entities o ON o.entity_id=f.object_entity_id
@@ -400,7 +412,11 @@ def _fact_to_out(r) -> Dict[str, Any]:
     return {"fact_id": r.fact_id, "scope": r.scope,
             "subject": {"id": r.subject_id, "name": r.subject_name},
             "predicate": r.predicate, "object": obj, "confidence": r.confidence,
-            "valid_from": r.valid_from, "valid_to": r.valid_to, "supports": []}
+            "valid_from": r.valid_from, "valid_to": r.valid_to,
+            "supports": list(getattr(r, "supports", None) or []),
+            "evidence": getattr(r, "evidence_span", None),
+            "polarity": getattr(r, "polarity", "positive"),
+            "assertion_status": getattr(r, "assertion_status", "observed")}
 
 
 def _assemble_pack(conn, scope, view, query, fact_rows, t, ch_counts,

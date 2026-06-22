@@ -33,8 +33,14 @@ def main(argv: list[str] | None = None) -> int:
             db.init_schema(drop=False)
             print("✓ schema initialized (cortex)")
         elif args.db_cmd == "reset":
-            db.init_schema(drop=True)
-            print("✓ schema reset (cortex)")
+            try:
+                db.init_schema(drop=True)
+            except PermissionError as exc:
+                print(f"✗ {exc}", file=sys.stderr)
+                print("  set CORTEX_DB_SCHEMA_OVERRIDE=cortex_test_<name> to reset an isolated schema",
+                      file=sys.stderr)
+                return 2
+            print("✓ isolated test schema reset")
         return 0
 
     if args.cmd == "probe-llm":

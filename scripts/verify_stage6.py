@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
+import uuid
+
+os.environ.setdefault("CORTEX_DB_SCHEMA_OVERRIDE", f"cortex_test_verify6_{uuid.uuid4().hex[:8]}")
 
 from fastapi.testclient import TestClient
 from sqlalchemy import text

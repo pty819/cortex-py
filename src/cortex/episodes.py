@@ -188,24 +188,33 @@ def get_case(episode_id: str) -> Optional[Dict[str, Any]]:
         if case["event_ids"]:
             frows = conn.execute(text("""
                 SELECT f.fact_id::text, f.predicate, f.object_type, f.object_value,
-                       s.canonical_name, o.canonical_name, f.confidence
+                       s.canonical_name, o.canonical_name, f.confidence,
+                       f.valid_from::text, f.valid_to::text, f.recorded_from::text,
+                       f.recorded_to::text, f.polarity, f.assertion_status, f.evidence_span
                 FROM facts f JOIN entities s ON s.entity_id=f.subject_id
                 LEFT JOIN entities o ON o.entity_id=f.object_entity_id
-                WHERE f.scope=:s AND f.valid_to IS NULL AND f.recorded_to IS NULL
+                WHERE f.scope=:s
                 AND EXISTS (SELECT 1 FROM unnest(f.supports) AS sid WHERE sid = ANY(CAST(:ids AS uuid[])))
                 LIMIT 50
             """), {"s": case["scope"], "ids": "{" + ",".join(case["event_ids"]) + "}"}).fetchall()
             case["facts"] = [{"fact_id": r[0], "predicate": r[1], "object_type": r[2],
                               "object_value": r[3], "subject_name": r[4],
-                              "object_name": r[5], "confidence": r[6]} for r in frows]
+                              "object_name": r[5], "confidence": r[6],
+                              "valid_from": r[7], "valid_to": r[8],
+                              "recorded_from": r[9], "recorded_to": r[10],
+                              "polarity": r[11], "assertion_status": r[12],
+                              "evidence": r[13]} for r in frows]
         else:
             case["facts"] = []
 
         # beliefs
+        case_fact_ids = [f["fact_id"] for f in case["facts"]]
         brows = conn.execute(text("""
             SELECT belief_id::text, claim, confidence, stance
-            FROM beliefs WHERE scope=:s AND valid_to IS NULL AND recorded_to IS NULL LIMIT 10
-        """), {"s": case["scope"]}).fetchall()
+            FROM beliefs WHERE scope=:s AND valid_to IS NULL AND recorded_to IS NULL
+              AND supports && CAST(:fids AS uuid[])
+            LIMIT 10
+        """), {"s": case["scope"], "fids": "{" + ",".join(case_fact_ids) + "}"}).fetchall() if case_fact_ids else []
         case["beliefs"] = [{"belief_id": r[0], "claim": r[1], "confidence": r[2], "stance": r[3]} for r in brows]
     return case
 
