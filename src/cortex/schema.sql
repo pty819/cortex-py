@@ -314,6 +314,23 @@ CREATE TABLE IF NOT EXISTS concepts (
 );
 CREATE INDEX IF NOT EXISTS idx_concepts_scope_topic ON cortex.concepts (scope, topic);
 
+-- ── Episodes case 元数据扩展(问题7:诊断 case 结构)──────────────────────────
+ALTER TABLE cortex.episodes ADD COLUMN IF NOT EXISTS case_id TEXT;
+ALTER TABLE cortex.episodes ADD COLUMN IF NOT EXISTS equipment TEXT;
+ALTER TABLE cortex.episodes ADD COLUMN IF NOT EXISTS lot TEXT;
+ALTER TABLE cortex.episodes ADD COLUMN IF NOT EXISTS recipe TEXT;
+ALTER TABLE cortex.episodes ADD COLUMN IF NOT EXISTS phase TEXT;
+ALTER TABLE cortex.episodes ADD COLUMN IF NOT EXISTS root_cause TEXT;
+ALTER TABLE cortex.episodes ADD COLUMN IF NOT EXISTS resolution TEXT;
+ALTER TABLE cortex.episodes ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open';
+ALTER TABLE cortex.episodes ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}';
+
+ALTER TABLE cortex.events ADD COLUMN IF NOT EXISTS case_id TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_episodes_case_id ON cortex.episodes (scope, case_id) WHERE recorded_to IS NULL;
+CREATE INDEX IF NOT EXISTS idx_episodes_status ON cortex.episodes (scope, status) WHERE recorded_to IS NULL;
+CREATE INDEX IF NOT EXISTS idx_events_case_id ON cortex.events (scope, case_id) WHERE excluded_from_recall = false;
+
 -- resolve 视图(03 决策 5:merged_into 软引用)
 CREATE OR REPLACE VIEW cortex.entities_resolved AS
     SELECT entity_id, COALESCE(merged_into, entity_id) AS resolved_id,

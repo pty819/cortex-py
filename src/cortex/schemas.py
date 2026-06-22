@@ -335,3 +335,35 @@ class IngestDocumentRequest(BaseModel):
     intent: str = "structure"     # structure | diagnosis | general
     min_chars: int = 200
     max_chars: int = 2000
+
+
+# ── Case (诊断 case CRUD)──────────────────────────────────────────────────
+class CaseCreateRequest(BaseModel):
+    scope: str
+    title: Optional[str] = None
+    case_id: Optional[str] = None
+    equipment: Optional[str] = None
+    lot: Optional[str] = None
+    recipe: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class CaseUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    phase: Optional[str] = None          # observation/scoping/investigation/correlation/root_cause/remediation/regression
+    status: Optional[str] = None         # open/investigating/resolved/closed
+    root_cause: Optional[str] = None
+    resolution: Optional[str] = None
+    equipment: Optional[str] = None
+    lot: Optional[str] = None
+    recipe: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class CaseAddEventRequest(BaseModel):
+    event_id: str
+
+
+class CaseSearchRequest(BaseModel):
+    scope: str
+    query: str

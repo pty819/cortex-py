@@ -386,3 +386,20 @@ CREATE OR REPLACE VIEW entities_resolved AS
 DO $$ BEGIN
   RAISE NOTICE 'SCHEMA: 15 tables + 1 view + v3() helper created in cortex_stage0';
 END $$;
+
+-- ── Episodes case 元数据扩展(问题7:诊断 case 结构)──────────────────────────
+ALTER TABLE cortex_stage0.episodes ADD COLUMN IF NOT EXISTS case_id TEXT;
+ALTER TABLE cortex_stage0.episodes ADD COLUMN IF NOT EXISTS equipment TEXT;
+ALTER TABLE cortex_stage0.episodes ADD COLUMN IF NOT EXISTS lot TEXT;
+ALTER TABLE cortex_stage0.episodes ADD COLUMN IF NOT EXISTS recipe TEXT;
+ALTER TABLE cortex_stage0.episodes ADD COLUMN IF NOT EXISTS phase TEXT;
+ALTER TABLE cortex_stage0.episodes ADD COLUMN IF NOT EXISTS root_cause TEXT;
+ALTER TABLE cortex_stage0.episodes ADD COLUMN IF NOT EXISTS resolution TEXT;
+ALTER TABLE cortex_stage0.episodes ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open';
+ALTER TABLE cortex_stage0.episodes ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}';
+
+ALTER TABLE cortex_stage0.events ADD COLUMN IF NOT EXISTS case_id TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_episodes_case_id ON cortex_stage0.episodes (scope, case_id) WHERE recorded_to IS NULL;
+CREATE INDEX IF NOT EXISTS idx_episodes_status ON cortex_stage0.episodes (scope, status) WHERE recorded_to IS NULL;
+CREATE INDEX IF NOT EXISTS idx_events_case_id ON cortex_stage0.events (scope, case_id) WHERE excluded_from_recall = false;

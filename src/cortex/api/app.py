@@ -509,7 +509,7 @@ def erasure_cancel(erasure_id: str, actor: str = Depends(auth)):
     return {"cancelled": ok}
 
 
-# episodes
+# episodes + cases
 @app.get("/v1/episodes")
 def list_eps(scope: str, actor: str = Depends(auth)):
     return {"items": episodes.list_episodes(scope)}
@@ -521,6 +521,52 @@ def build_eps(body: dict, actor: str = Depends(auth)):
     if not scope:
         raise HTTPException(422, "scope required")
     return episodes.segment_scope(scope)
+
+
+# ── Case CRUD(诊断 case 管理)──────────────────────────────────────────────
+@app.post("/v1/cases")
+def case_create(body: schemas.CaseCreateRequest, actor: str = Depends(auth)):
+    return episodes.create_case(scope=body.scope, title=body.title, case_id=body.case_id,
+                                equipment=body.equipment, lot=body.lot, recipe=body.recipe,
+                                metadata=body.metadata)
+
+
+@app.get("/v1/cases")
+def case_list(scope: str, status: str = Query(None), equipment: str = Query(None),
+              limit: int = 50, actor: str = Depends(auth)):
+    return {"items": episodes.list_cases(scope, status=status, equipment=equipment, limit=limit)}
+
+
+@app.get("/v1/cases/{episode_id}")
+def case_get(episode_id: str, actor: str = Depends(auth)):
+    c = episodes.get_case(episode_id)
+    if not c:
+        raise HTTPException(404, "case not found")
+    return c
+
+
+@app.patch("/v1/cases/{episode_id}")
+def case_update(episode_id: str, body: schemas.CaseUpdateRequest, actor: str = Depends(auth)):
+    fields = body.model_dump(exclude_none=True)
+    if not fields:
+        raise HTTPException(422, "no fields to update")
+    res = episodes.update_case(episode_id, **fields)
+    if "error" in res:
+        raise HTTPException(422, res["error"])
+    return res
+
+
+@app.post("/v1/cases/{episode_id}/events")
+def case_add_event(episode_id: str, body: schemas.CaseAddEventRequest, actor: str = Depends(auth)):
+    res = episodes.add_event_to_case(episode_id, body.event_id)
+    if "error" in res:
+        raise HTTPException(404, res["error"])
+    return res
+
+
+@app.post("/v1/cases/search")
+def case_search(body: schemas.CaseSearchRequest, actor: str = Depends(auth)):
+    return {"items": episodes.search_cases(body.scope, body.query)}
 
 
 # vocab CRUD

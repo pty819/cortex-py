@@ -256,6 +256,47 @@ def episodes_list(scope: Optional[str] = None, ctx: Context = None) -> Dict[str,
 
 
 @mcp.tool()
+def case_create(title: Optional[str] = None, equipment: Optional[str] = None,
+                lot: Optional[str] = None, recipe: Optional[str] = None,
+                scope: Optional[str] = None, ctx: Context = None) -> Dict[str, Any]:
+    """Create a diagnostic case (incident). Cases track the full lifecycle:
+    observation → scoping → investigation → correlation → root_cause → remediation → regression.
+    Returns episode_id for the new case."""
+    return episodes.create_case(scope=_eff_scope(ctx, scope), title=title, equipment=equipment,
+                                lot=lot, recipe=recipe)
+
+
+@mcp.tool()
+def case_update(episode_id: str, phase: Optional[str] = None, status: Optional[str] = None,
+                root_cause: Optional[str] = None, resolution: Optional[str] = None,
+                ctx: Context = None) -> Dict[str, Any]:
+    """Update a diagnostic case. phase: observation/scoping/investigation/correlation/root_cause/remediation/regression.
+    status: open/investigating/resolved/closed."""
+    return episodes.update_case(episode_id, phase=phase, status=status,
+                               root_cause=root_cause, resolution=resolution)
+
+
+@mcp.tool()
+def case_get(episode_id: str) -> Dict[str, Any]:
+    """Get full case details: metadata + events + facts + beliefs."""
+    c = episodes.get_case(episode_id)
+    return c or {"error": "case not found"}
+
+
+@mcp.tool()
+def case_list(status: Optional[str] = None, equipment: Optional[str] = None,
+              scope: Optional[str] = None, ctx: Context = None) -> Dict[str, Any]:
+    """List diagnostic cases, optionally filtered by status or equipment."""
+    return {"items": episodes.list_cases(_eff_scope(ctx, scope), status=status, equipment=equipment)}
+
+
+@mcp.tool()
+def case_search(query: str, scope: Optional[str] = None, ctx: Context = None) -> Dict[str, Any]:
+    """Search cases by root_cause/title/equipment (fuzzy match)."""
+    return {"items": episodes.search_cases(_eff_scope(ctx, scope), query)}
+
+
+@mcp.tool()
 def vocab_list(scope: Optional[str] = None, ctx: Context = None) -> Dict[str, Any]:
     """List controlled vocabularies."""
     sc = _eff_scope(ctx, scope)
