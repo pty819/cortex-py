@@ -39,9 +39,14 @@ def append_event(*, scope: str, modality: str, content: Dict[str, Any], context:
             "SELECT event_id, wal_offset FROM events WHERE scope=:s AND idempotency_key=:k"
         ), {"s": scope, "k": idempotency_key}).fetchone()
         if existing:
-            ex_body = c.execute(text(
-                "SELECT encode(digest(:m||content::text||context::text,'sha256'),'hex') FROM events WHERE event_id=:id"
-            ), {"m": modality, "id": existing.event_id}).scalar()
+            # 用 Python 端重算 hash 对比(避免 PG jsonb::text 与 Python json.dumps 排序差异)
+            ex_content = c.execute(text("SELECT content FROM events WHERE event_id=:id"),
+                                   {"id": existing.event_id}).scalar()
+            ex_context = c.execute(text("SELECT context FROM events WHERE event_id=:id"),
+                                   {"id": existing.event_id}).scalar()
+            ex_modality = c.execute(text("SELECT modality FROM events WHERE event_id=:id"),
+                                    {"id": existing.event_id}).scalar()
+            ex_body = _body_hash(ex_modality, ex_content, ex_context)
             if ex_body == _body_hash(modality, content, context):
                 return str(existing.event_id), existing.wal_offset
             raise IdempotencyConflict(f"idempotency_key={idempotency_key} 已存在且 body 不同")

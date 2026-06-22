@@ -36,11 +36,35 @@ def _fact_text(row) -> str:
     return f"{subj} {row.predicate} {obj}"
 
 
+# ── 时态过滤辅助(通道统一用,支持 as_of / include_superseded)─────────────────
+def _temporal_clause(as_of: Optional[str], include_superseded: bool) -> str:
+    """返回通道 SQL 的时间过滤片段。
+    默认(无 as_of): valid_to IS NULL AND recorded_to IS NULL(当前 live facts)
+    as_of(不含 include_superseded): valid_from<=t<valid_to AND recorded_to IS NULL(当时为真+当前认知)
+    as_of + include_superseded: valid_from<=t<valid_to AND recorded_from<=t(含历史认知)"""
+    if as_of:
+        base = "valid_from <= CAST(:ao AS timestamptz) AND (valid_to IS NULL OR CAST(:ao AS timestamptz) < valid_to)"
+        if include_superseded:
+            return base + " AND recorded_from <= CAST(:ao AS timestamptz)"
+        return base + " AND recorded_to IS NULL"
+    if not include_superseded:
+        return "valid_to IS NULL AND recorded_to IS NULL"
+    return "valid_to IS NULL"  # include_superseded 但无 as_of: 返回所有 valid 的(含被软关的)
+
+
+def _temporal_params(as_of: Optional[str]) -> Dict[str, Any]:
+    """返回通道 SQL 需要的时态参数。"""
+    return {"ao": as_of} if as_of else {}
+
+
 # ── 通道 ────────────────────────────────────────────────────────────────────
-def _chan_vector(conn, scope: str, view: str, q_emb: List[float], top_k: int) -> List[str]:
-    """向量:query embedding → 最近实体 → 其 live facts。"""
+def _chan_vector(conn, scope: str, view: str, q_emb: List[float], top_k: int,
+                 as_of: str = None, include_superseded: bool = False) -> List[str]:
+    """向量:query embedding → 最近实体 → 其 facts(时态过滤)。"""
     frag, p = _scope_filter(scope, view)
     p["q"] = str(q_emb); p["k"] = top_k
+    p.update(_temporal_params(as_of))
+    tc = _temporal_clause(as_of, include_superseded)
     sql = f"""
         WITH near AS (
           SELECT entity_id FROM entities
@@ -48,7 +72,7 @@ def _chan_vector(conn, scope: str, view: str, q_emb: List[float], top_k: int) ->
           ORDER BY embedding <=> CAST(:q AS vector) LIMIT :k
         )
         SELECT DISTINCT f.fact_id::text FROM facts f
-        WHERE f.{frag} AND f.valid_to IS NULL AND f.recorded_to IS NULL
+        WHERE f.{frag} AND f.{tc}
           AND (f.subject_id IN (SELECT entity_id FROM near)
                OR f.object_entity_id IN (SELECT entity_id FROM near))
         LIMIT :k
@@ -56,12 +80,15 @@ def _chan_vector(conn, scope: str, view: str, q_emb: List[float], top_k: int) ->
     return [r[0] for r in conn.execute(text(sql), p).fetchall()]
 
 
-def _chan_bm25(conn, scope: str, view: str, query: str, top_k: int) -> List[str]:
+def _chan_bm25(conn, scope: str, view: str, query: str, top_k: int,
+               as_of: str = None, include_superseded: bool = False) -> List[str]:
     frag, p = _scope_filter(scope, view)
     p["q"] = query; p["k"] = top_k
+    p.update(_temporal_params(as_of))
+    tc = _temporal_clause(as_of, include_superseded)
     sql = f"""
         SELECT fact_id::text FROM facts
-        WHERE {frag} AND valid_to IS NULL AND recorded_to IS NULL
+        WHERE {frag} AND {tc}
           AND to_tsvector('english', coalesce(predicate,'')||' '||coalesce(object_value->>'value','')||' '||coalesce((SELECT canonical_name FROM entities WHERE entity_id=facts.subject_id),'')) @@ plainto_tsquery(:q)
         ORDER BY ts_rank(to_tsvector('english',coalesce(predicate,'')||' '||coalesce(object_value->>'value','')), plainto_tsquery(:q)) DESC
         LIMIT :k
@@ -69,28 +96,28 @@ def _chan_bm25(conn, scope: str, view: str, query: str, top_k: int) -> List[str]
     return [r[0] for r in conn.execute(text(sql), p).fetchall()]
 
 
-def _chan_graph(conn, scope: str, view: str, q_emb: List[float], max_hops: int, top_k: int) -> List[str]:
-    """图遍历:种子实体出发,递归 CTE BFS max_hops 跳,返回路径上的 facts。
-    Stage 0 验证过的递归 CTE 现在真正用于产品路径。"""
+def _chan_graph(conn, scope: str, view: str, q_emb: List[float], max_hops: int, top_k: int,
+                as_of: str = None, include_superseded: bool = False) -> List[str]:
+    """图遍历:种子实体出发,递归 CTE BFS max_hops 跳,返回路径上的 facts(时态过滤)。"""
     frag, p = _scope_filter(scope, view)
     p["q"] = str(q_emb); p["k"] = top_k; p["h"] = max_hops
+    p.update(_temporal_params(as_of))
+    tc = _temporal_clause(as_of, include_superseded)
     sql = f"""
       WITH RECURSIVE seeds AS (
         SELECT entity_id FROM entities WHERE merged_into IS NULL AND embedding IS NOT NULL AND {frag}
         ORDER BY embedding <=> CAST(:q AS vector) LIMIT 5
       ),
       graph_walk AS (
-        -- 第 1 跳:种子的出边
         SELECT f.object_entity_id AS node, f.predicate, 1 AS hop
           FROM facts f, seeds s
          WHERE f.subject_id = s.entity_id AND f.{frag}
-           AND f.valid_to IS NULL AND f.recorded_to IS NULL
+           AND f.{tc}
            AND f.object_entity_id IS NOT NULL
         UNION ALL
-        -- 递归:沿 node 的出边继续(max_hops 跳)
         SELECT f.object_entity_id, f.predicate, gw.hop + 1
           FROM facts f JOIN graph_walk gw ON f.subject_id = gw.node
-         WHERE f.{frag} AND f.valid_to IS NULL AND f.recorded_to IS NULL
+         WHERE f.{frag} AND f.{tc}
            AND f.object_entity_id IS NOT NULL
            AND gw.hop < :h
       ),
@@ -99,7 +126,7 @@ def _chan_graph(conn, scope: str, view: str, q_emb: List[float], max_hops: int, 
         UNION SELECT node FROM graph_walk WHERE node IS NOT NULL
       )
       SELECT DISTINCT f.fact_id::text FROM facts f
-      WHERE f.{frag} AND f.valid_to IS NULL AND f.recorded_to IS NULL
+      WHERE f.{frag} AND f.{tc}
         AND (f.subject_id IN (SELECT entity_id FROM reachable)
              OR f.object_entity_id IN (SELECT entity_id FROM reachable))
       LIMIT :k
@@ -107,8 +134,11 @@ def _chan_graph(conn, scope: str, view: str, q_emb: List[float], max_hops: int, 
     return [r[0] for r in conn.execute(text(sql), p).fetchall()]
 
 
-def _expand_synonyms(conn, scope: str, query: str) -> List[str]:
-    """synonym 通道:用 synonyms 表把 query 词扩展成同义词集,做 tsvector 查询。"""
+def _expand_synonyms(conn, scope: str, query: str,
+                   as_of: str = None, include_superseded: bool = False) -> List[str]:
+    """synonym 通道。"""
+    _tc = _temporal_clause(as_of, include_superseded)
+    _tp = _temporal_params(as_of)
     words = re.findall(r"\w+", query.lower())
     terms = set(words)
     for w in words:
@@ -125,14 +155,17 @@ def _expand_synonyms(conn, scope: str, query: str) -> List[str]:
         WHERE scope=:s AND valid_to IS NULL AND recorded_to IS NULL
           AND to_tsvector('english', coalesce(predicate,'')||' '||coalesce(object_value->>'value',''))
               @@ plainto_tsquery(:q) LIMIT :k
-    """), {"s": scope, "q": expanded, "k": 40}).fetchall()
+    """), {**{"s": scope, "q": expanded, "k": 40}, **_tp}).fetchall()
     return [r[0] for r in rows]
 
 
-def _chan_entity_name(conn, scope: str, view: str, query: str, top_k: int) -> List[str]:
-    """entity-name 通道:精确(canonical_name/alias)+ 模糊(pg_trgm)命中实体→其 facts。"""
+def _chan_entity_name(conn, scope: str, view: str, query: str, top_k: int,
+                     as_of: str = None, include_superseded: bool = False) -> List[str]:
+    """entity-name 通道。"""
     frag, p = _scope_filter(scope, view)
     p["k"] = top_k
+    p.update(_temporal_params(as_of))
+    tc = _temporal_clause(as_of, include_superseded)
     names = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b", query)
     if not names:
         names = [w for w in re.findall(r"\w+", query) if len(w) > 3][:5]
@@ -155,20 +188,23 @@ def _chan_entity_name(conn, scope: str, view: str, query: str, top_k: int) -> Li
     eid_arr = "{" + ",".join(eids) + "}"
     rows = conn.execute(text(f"""
         SELECT DISTINCT fact_id::text FROM facts
-        WHERE {frag} AND valid_to IS NULL AND recorded_to IS NULL
+        WHERE {frag} AND {tc}
           AND (subject_id = ANY(CAST(:eids AS uuid[])) OR object_entity_id = ANY(CAST(:eids AS uuid[])))
         LIMIT :k
     """), {**p, "eids": eid_arr}).fetchall()
     return [r[0] for r in rows]
 
 
-def _chan_temporal_decay(conn, scope: str, view: str, top_k: int, decay_days: int = 30) -> List[str]:
+def _chan_temporal_decay(conn, scope: str, view: str, top_k: int, decay_days: int = 30,
+                       as_of: str = None, include_superseded: bool = False) -> List[str]:
     """temporal-decay 通道:近因窗内 facts,按时间衰减(越新越靠前)。"""
     frag, p = _scope_filter(scope, view)
     p["k"] = top_k; p["d"] = decay_days
+    p.update(_temporal_params(as_of))
+    tc = _temporal_clause(as_of, include_superseded)
     sql = f"""
         SELECT fact_id::text FROM facts
-        WHERE {frag} AND valid_to IS NULL AND recorded_to IS NULL
+        WHERE {frag} AND {tc}
           AND valid_from >= now() - make_interval(secs => :d * 86400)
         ORDER BY valid_from DESC LIMIT :k
     """
@@ -241,14 +277,14 @@ def recall(*, scope: str, query: Optional[str] = None, view: str = "local",
                 if row and row[0]:
                     extra_embs.append(list(row[0]))
 
-        c_vec = _chan_vector(conn, scope, view, q_emb, top_k)
+        c_vec = _chan_vector(conn, scope, view, q_emb, top_k, as_of, include_superseded)
         for e in extra_embs:
-            c_vec = list(dict.fromkeys(c_vec + _chan_vector(conn, scope, view, e, top_k)))
-        c_bm25 = _chan_bm25(conn, scope, view, query, top_k)
-        c_graph = _chan_graph(conn, scope, view, q_emb, cfg.retrieval.graph_max_hops, top_k)
-        c_ent = _chan_entity_name(conn, scope, view, query, top_k)
-        c_syn = _expand_synonyms(conn, scope, query)
-        c_tmp = _chan_temporal_decay(conn, scope, view, top_k)
+            c_vec = list(dict.fromkeys(c_vec + _chan_vector(conn, scope, view, e, top_k, as_of, include_superseded)))
+        c_bm25 = _chan_bm25(conn, scope, view, query, top_k, as_of, include_superseded)
+        c_graph = _chan_graph(conn, scope, view, q_emb, cfg.retrieval.graph_max_hops, top_k, as_of, include_superseded)
+        c_ent = _chan_entity_name(conn, scope, view, query, top_k, as_of, include_superseded)
+        c_syn = _expand_synonyms(conn, scope, query, as_of, include_superseded)
+        c_tmp = _chan_temporal_decay(conn, scope, view, top_k, as_of=as_of, include_superseded=include_superseded)
         if adv.multihop_enabled and services.llm_configured("synthesis"):
             try:
                 import json as _j
@@ -256,7 +292,7 @@ def recall(*, scope: str, query: Optional[str] = None, view: str = "local",
                     _j.dumps({"query": query, "n": adv.multihop_count}))
                 subs = services.parse_llm_json(raw)
                 for sq in (subs.get("queries") or [])[:adv.multihop_count]:
-                    c_bm25 = list(dict.fromkeys(c_bm25 + _chan_bm25(conn, scope, view, sq, top_k)))
+                    c_bm25 = list(dict.fromkeys(c_bm25 + _chan_bm25(conn, scope, view, sq, top_k, as_of, include_superseded)))
             except Exception:  # noqa: BLE001
                 pass
         t["fetch"] = (time.time() - t0) * 1000

@@ -110,16 +110,25 @@ def _llm_entity_link(name: str, etype: Optional[str], description: str,
             "reason": data.get("reason", "")}
 
 
-# 单值谓词:新 fact 到达时闭合旧 fact(超替)。
-# 多值谓词:天然允许多条共存,不超替(has_component/caused_by/has_symptom/correlates_with 等)。
+# 单值谓词默认集合(代码级 fallback,优先查 DB vocabularies.cardinality)。
 _SINGLE_VALUE_PREDICATES = {
     "has_status", "deal_stage", "renewed_arr", "has_policy", "has_quota",
     "configured_as", "valid_value",
 }
 
 
-def _is_single_value(predicate: str) -> bool:
-    """判断谓词是否单值(新值到达应超替旧值)。多值谓词允许多条共存。"""
+def _is_single_value(conn, scope: str, predicate: str) -> bool:
+    """判断谓词是否单值(新值到达应超替旧值)。
+    优先查 DB vocabulary_values.cardinality(per-value 级);无词表时用代码级 fallback。"""
+    row = conn.execute(text("""
+        SELECT vv.cardinality FROM vocabularies v
+        JOIN vocabulary_values vv ON vv.vocab_id = v.vocab_id
+        WHERE v.scope=:s AND v.name='predicate'
+        AND (vv.canonical_value=:p OR :p = ANY(vv.aliases))
+        LIMIT 1
+    """), {"s": scope, "p": predicate}).fetchone()
+    if row and row[0]:
+        return row[0] == "single"
     return predicate in _SINGLE_VALUE_PREDICATES
 
 
@@ -127,8 +136,8 @@ def _close_superseded(conn, scope: str, subject_id: str, predicate: str,
                       valid_from: str, object_value: Optional[str] = None) -> int:
     """超替:仅对单值谓词,把同 (subject,predicate) 的当前活 fact 的 valid_to 闭合。
     多值谓词(has_component/caused_by/has_symptom/correlates_with 等)不超替,允许多条共存。
-    对单值谓词,如果 object 也匹配(传了 object_value),只闭合完全相同的;否则闭合所有同谓词的。"""
-    if not _is_single_value(predicate):
+    cardinality 从 DB vocabularies 查(scope 级),无词表时用代码级 fallback。"""
+    if not _is_single_value(conn, scope, predicate):
         return 0  # 多值谓词:不超替
     if object_value:
         # 精确匹配同 subject+predicate+object 的活 fact
@@ -233,6 +242,16 @@ def extract_event(event_id: str) -> Dict[str, Any]:
             obj_type = f.get("object_type", "entity")
             fact_conf = float(f.get("confidence", 0.8)) if f.get("confidence") else 0.8
             fact_vf = f.get("valid_from") or observed_at
+            fact_vt = f.get("valid_to")  # 可选: fact 何时停止为真
+            evidence_span = f.get("evidence_span")  # 可选: 源文本引用
+            is_negated = f.get("negation", False)  # 可选: 否定断言("X不是Y")
+            # 否定断言: confidence 取反 + 标记 evidence_span
+            if is_negated:
+                fact_conf = max(0.1, 1.0 - fact_conf)
+                if evidence_span:
+                    evidence_span = f"[NEGATED] {evidence_span}"
+                else:
+                    evidence_span = "[NEGATED]"
             if obj_type == "entity":
                 obj_eid = ent_map.get(f["object"].lower())
                 if not obj_eid:
@@ -244,13 +263,22 @@ def extract_event(event_id: str) -> Dict[str, Any]:
             else:
                 val = coerce_value(conn, scope, _guess_vocab(pred), f["object"])
                 obj_value = {"datatype": "string", "value": val}
+                if evidence_span:
+                    obj_value["evidence_span"] = evidence_span
+                if fact_vt:
+                    obj_value["valid_to_extracted"] = fact_vt
                 _close_superseded(conn, scope, subj, pred, fact_vf, val)
                 fid = _insert_fact(conn, scope=scope, subject_id=subj, predicate=pred,
                                    object_type="literal", object_entity_id=None, object_value=obj_value,
                                    valid_from=fact_vf, confidence=fact_conf, supports=[event_id], model=model)
+            # entity 类型的 fact 也存 evidence_span 到 fact 的 supports 旁(通过 update)
+            if evidence_span and obj_type == "entity":
+                conn.execute(text("UPDATE facts SET object_value = jsonb_build_object('datatype','entity','evidence_span',:es) WHERE fact_id=CAST(:fid AS uuid)"),
+                             {"es": evidence_span, "fid": fid})
             fact_ids.append(fid)
 
         if fact_ids:
+            _detect_conflicts(conn, scope)  # 检测冲突并标记
             _aggregate_belief(conn, scope, ent_map, fact_ids, observed_at, model)
 
         emit_lifecycle(conn, kind="extracted", scope=scope, event_id=event_id,
@@ -265,6 +293,38 @@ def extract_event(event_id: str) -> Dict[str, Any]:
 def _guess_vocab(predicate: str) -> str:
     """字面值 fact 的 object 可能属于某词表;猜词表名=谓词名。"""
     return predicate  # 无词表则原样(coerce 返回 raw)
+
+
+def _detect_conflicts(conn, scope: str) -> int:
+    """检测冲突:同 (scope, subject, predicate) 但 object 不同 → 标记 conflict_to。
+    返回检测到的冲突组数。"""
+    # 找同 subject+predicate 但不同 object 的活 facts(仅单值谓词)
+    rows = conn.execute(text("""
+        SELECT subject_id::text, predicate,
+               count(DISTINCT CASE WHEN object_type='entity' THEN object_entity_id::text
+                                   ELSE object_value->>'value' END) AS n_objects
+        FROM facts
+        WHERE scope=:s AND valid_to IS NULL AND recorded_to IS NULL
+          AND object_type IS NOT NULL
+        GROUP BY subject_id, predicate
+        HAVING count(DISTINCT CASE WHEN object_type='entity' THEN object_entity_id::text
+                                    ELSE object_value->>'value' END) > 1
+    """), {"s": scope}).fetchall()
+    n_conflicts = 0
+    for r in rows:
+        subj_id, pred = r[0], r[1]
+        # 标记同 subject+predicate 的所有 fact 的 object_value 加 conflict 标记
+        conn.execute(text("""
+            UPDATE facts
+            SET object_value = CASE
+                WHEN object_value IS NULL THEN jsonb_build_object('datatype','entity','conflict',true)
+                ELSE object_value || jsonb_build_object('conflict',true)
+            END
+            WHERE scope=:s AND subject_id=CAST(:sub AS uuid) AND predicate=:p
+            AND valid_to IS NULL AND recorded_to IS NULL
+        """), {"s": scope, "sub": subj_id, "p": pred})
+        n_conflicts += 1
+    return n_conflicts
 
 
 def _compute_belief_confidence(conn, scope: str, subj_id: str, fact_ids: List[str]) -> float:
@@ -293,7 +353,34 @@ def _compute_belief_confidence(conn, scope: str, subj_id: str, fact_ids: List[st
         AND predicate IN ('caused_by','correlates_with','confirmed_by','supports')
     """), {"ids": "{" + ",".join(fact_ids) + "}", "s": scope}).scalar() or 0
     confidence = avg_conf + 0.1 * min(n_sources, 3) + 0.05 * min(n_diag, 3)
+    # 冲突检测:同 subject 有 conflict 标记的 fact → confidence 降权 + stance 降级
+    n_conflict = conn.execute(text("""
+        SELECT count(*) FROM facts
+        WHERE fact_id = ANY(CAST(:ids AS uuid[])) AND scope=:s
+        AND object_value ? 'conflict'
+    """), {"ids": "{" + ",".join(fact_ids) + "}", "s": scope}).scalar() or 0
+    if n_conflict > 0:
+        confidence *= 0.6  # 冲突 fact 存在 → belief 置信度打 6 折
     return min(0.95, max(0.1, round(confidence, 3)))
+
+
+def _detect_belief_stance(conn, scope: str, subj_id: str, fact_ids: List[str]) -> str:
+    """判断 belief stance:有冲突 → uncertain;有 contradicts/ruled_out → likely_false;否则 likely_true。"""
+    n_conflict = conn.execute(text("""
+        SELECT count(*) FROM facts
+        WHERE fact_id = ANY(CAST(:ids AS uuid[])) AND scope=:s
+        AND object_value ? 'conflict'
+    """), {"ids": "{" + ",".join(fact_ids) + "}", "s": scope}).scalar() or 0
+    if n_conflict > 0:
+        return "uncertain"
+    n_contradict = conn.execute(text("""
+        SELECT count(*) FROM facts
+        WHERE fact_id = ANY(CAST(:ids AS uuid[])) AND scope=:s
+        AND predicate IN ('contradicts','ruled_out')
+    """), {"ids": "{" + ",".join(fact_ids) + "}", "s": scope}).scalar() or 0
+    if n_contradict > 0:
+        return "likely_false"
+    return "likely_true"
 
 
 def _aggregate_belief_for_scope(scope: str) -> int:
@@ -319,9 +406,11 @@ def _aggregate_belief_for_scope(scope: str) -> int:
                 "SELECT fact_id::text FROM facts WHERE scope=:s AND subject_id=CAST(:a AS uuid) AND valid_to IS NULL AND recorded_to IS NULL"),
                 {"s": scope, "a": subj_id}).fetchall()]
             conf = _compute_belief_confidence(conn, scope, subj_id, fids)
+            stance = _detect_belief_stance(conn, scope, subj_id, fids)
             conn.execute(text("""INSERT INTO beliefs (scope, about_entity_id, stance, claim, confidence, supports, valid_from)
-                VALUES (:s,CAST(:a AS uuid),'likely_true',:claim,:conf,CAST(:sup AS uuid[]),CAST(:vf AS timestamptz))"""),
-                {"s": scope, "a": subj_id, "claim": f"{name} is associated with {cnt} observed facts",
+                VALUES (:s,CAST(:a AS uuid),:stance,:claim,:conf,CAST(:sup AS uuid[]),CAST(:vf AS timestamptz))"""),
+                {"s": scope, "a": subj_id, "stance": stance,
+                 "claim": f"{name} is associated with {cnt} observed facts",
                  "conf": conf, "sup": "{" + ",".join(fids) + "}", "vf": vf or "now()"})
             n += 1
     return n
@@ -372,8 +461,17 @@ _SCHEMA = {
             "required": ["name"]}},
         "facts": {"type": "array", "items": {
             "type": "object",
-            "properties": {"subject": {"type": "string"}, "predicate": {"type": "string"},
-                           "object": {"type": "string"}, "object_type": {"type": "string"}},
+            "properties": {
+                "subject": {"type": "string"},
+                "predicate": {"type": "string"},
+                "object": {"type": "string"},
+                "object_type": {"type": "string"},
+                "confidence": {"type": "number", "description": "0.0-1.0, extraction confidence"},
+                "valid_from": {"type": "string", "description": "ISO8601 when this fact became true (optional, defaults to event time)"},
+                "valid_to": {"type": "string", "description": "ISO8601 when this fact stopped being true (optional)"},
+                "evidence_span": {"type": "string", "description": "quote or reference to the source text supporting this fact"},
+                "negation": {"type": "boolean", "description": "true if the text says this fact is NOT true (negated assertion)"}
+            },
             "required": ["subject", "predicate", "object"]}}},
     "required": ["entities", "facts"],
 }

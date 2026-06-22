@@ -44,3 +44,8 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 110
 target-version = "py312"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.0",
+]

@@ -212,6 +212,7 @@ CREATE TABLE IF NOT EXISTS vocabularies (
     name        TEXT NOT NULL,
     kind        TEXT NOT NULL CHECK (kind IN ('closed','open')),
     description TEXT,
+    cardinality TEXT DEFAULT 'multi',  -- 'single'(新值超替旧值) | 'multi'(多值共存)
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (scope, name)
 );
@@ -221,6 +222,7 @@ CREATE TABLE IF NOT EXISTS vocabulary_values (
     canonical_value TEXT NOT NULL,
     aliases         TEXT[] NOT NULL DEFAULT '{}',
     sort_order      INT NOT NULL DEFAULT 0,
+    cardinality     TEXT DEFAULT 'multi',  -- 'single'(单值,超替) | 'multi'(多值,共存) — per-value
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (vocab_id, canonical_value)
 );
@@ -313,6 +315,10 @@ CREATE TABLE IF NOT EXISTS concepts (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_concepts_scope_topic ON cortex.concepts (scope, topic);
+
+-- ── Vocabularies cardinality 列(缺口4:predicate cardinality 入 DB)────────
+ALTER TABLE cortex.vocabularies ADD COLUMN IF NOT EXISTS cardinality TEXT DEFAULT 'multi';
+ALTER TABLE cortex.vocabulary_values ADD COLUMN IF NOT EXISTS cardinality TEXT DEFAULT 'multi';
 
 -- ── Episodes case 元数据扩展(问题7:诊断 case 结构)──────────────────────────
 ALTER TABLE cortex.episodes ADD COLUMN IF NOT EXISTS case_id TEXT;

@@ -12,37 +12,41 @@ from sqlalchemy import text
 from .db import session_scope
 
 # ── 诊断场景因果 predicate 预置词表 ─────────────────────────────────────────
+# (predicate, description, cardinality: 'single'=新值超替旧值, 'multi'=多值共存)
 DIAGNOSIS_PREDICATES = [
-    ("caused_by",   "故障由...引起"),
-    ("led_to",      "...导致"),
-    ("symptom_of",  "是...的症状"),
-    ("affects",     "...影响"),
-    ("part_of",     "...是...的组成部分"),
-    ("has_component", "...包含"),
-    ("has_symptom", "...表现为"),
-    ("repaired_by", "...被...修复"),
-    ("observed_by", "...被...发现"),
-    ("preceded_by", "...发生在...之后(时序)"),
+    ("caused_by",      "故障由...引起",          "multi"),
+    ("led_to",         "...导致",                "multi"),
+    ("symptom_of",     "是...的症状",            "multi"),
+    ("affects",        "...影响",                "multi"),
+    ("part_of",        "...是...的组成部分",      "multi"),
+    ("has_component",  "...包含",                "multi"),
+    ("has_symptom",    "...表现为",              "multi"),
+    ("repaired_by",    "...被...修复",            "multi"),
+    ("observed_by",    "...被...发现",            "multi"),
+    ("preceded_by",    "...发生在...之后(时序)",  "multi"),
+    ("has_status",     "...状态为",              "single"),  # 单值:新状态超替旧状态
+    ("deal_stage",     "交易阶段",               "single"),
 ]
 
 def seed_diagnosis_vocab(scope: str) -> int:
-    """预置诊断场景因果 predicate 闭合词表(幂等)。返回新增值数。"""
+    """预置诊断场景因果 predicate 闭合词表(幂等,含 cardinality)。返回新增值数。"""
     n = 0
     with session_scope() as conn:
         row = conn.execute(text("""
-            INSERT INTO vocabularies (scope, name, kind, description)
-            VALUES (:s, 'predicate', 'closed', 'Diagnosis causal predicates')
-            ON CONFLICT (scope, name) DO NOTHING RETURNING vocab_id
+            INSERT INTO vocabularies (scope, name, kind, description, cardinality)
+            VALUES (:s, 'predicate', 'closed', 'Diagnosis causal predicates', 'multi')
+            ON CONFLICT (scope, name) DO UPDATE SET cardinality='multi'
+            RETURNING vocab_id
         """), {"s": scope}).fetchone()
-        if not row:  # 已存在,取 id
+        if not row:
             row = conn.execute(text("SELECT vocab_id FROM vocabularies WHERE scope=:s AND name='predicate'"),
                                {"s": scope}).fetchone()
         if row:
-            for pred, desc in DIAGNOSIS_PREDICATES:
+            for pred, desc, card in DIAGNOSIS_PREDICATES:
                 r = conn.execute(text("""
-                    INSERT INTO vocabulary_values (vocab_id, canonical_value, aliases)
-                    VALUES (:v, :c, '{}') ON CONFLICT (vocab_id, canonical_value) DO NOTHING
-                """), {"v": str(row.vocab_id), "c": pred})
+                    INSERT INTO vocabulary_values (vocab_id, canonical_value, aliases, cardinality)
+                    VALUES (:v, :c, '{}', :card) ON CONFLICT (vocab_id, canonical_value) DO UPDATE SET cardinality=:card
+                """), {"v": str(row.vocab_id), "c": pred, "card": card})
                 n += r.rowcount or 0
     return n
 
