@@ -10,7 +10,7 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
-import httpx
+import httpx2 as httpx
 
 from .config import RerankCfg, EmbeddingCfg, LLMTierCfg, load_config, llm_configured
 

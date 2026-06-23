@@ -282,9 +282,9 @@ cat triples.jsonl | curl -X POST http://<cortex-host>:8002/v1/import/jsonl \
   }'
 
 # 方式二：先准备好 JSONL 文件，用 Python 调
-import httpx
+import httpx2
 lines = open("triples.jsonl").read()
-r = httpx.post("http://<cortex-host>:8002/v1/import/jsonl",
+r = httpx2.post("http://<cortex-host>:8002/v1/import/jsonl",
     json={"scope": "mech:plant1/line:A/user:diag", "lines": lines})
 print(r.json())  # {"import_id":"...","accepted":50,"failed":0}
 ```

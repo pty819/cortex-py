@@ -12,7 +12,7 @@ import json
 import time
 import uuid
 
-import httpx
+import httpx2 as httpx
 
 API = "http://127.0.0.1:8002"
 SCOPE = "mech:plant1/line:A/user:diag"

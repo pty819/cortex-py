@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-import httpx
+import httpx2 as httpx
 
 PORT = 8000
 URL = f"http://127.0.0.1:{PORT}/mcp"

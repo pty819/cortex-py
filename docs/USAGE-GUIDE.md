@@ -222,12 +222,12 @@ curl "http://localhost:8002/v1/facts?scope=equip:XXX-v1&predicate=caused_by" -H 
 ### 用 Python 脚本看图谱全貌
 
 ```python
-import httpx
+import httpx2
 SCOPE = "equip:XXX-v1"
 HEAD = {"X-Cortex-Actor": "admin"}
 
-ents = httpx.get(f"http://localhost:8002/v1/entities", params={"scope": SCOPE}, headers=HEAD).json()
-facts = httpx.get(f"http://localhost:8002/v1/facts", params={"scope": SCOPE}, headers=HEAD).json()
+ents = httpx2.get(f"http://localhost:8002/v1/entities", params={"scope": SCOPE}, headers=HEAD).json()
+facts = httpx2.get(f"http://localhost:8002/v1/facts", params={"scope": SCOPE}, headers=HEAD).json()
 
 print(f"实体({len(ents['items'])}):")
 for e in ents["items"]:
