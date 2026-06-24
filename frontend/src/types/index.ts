@@ -137,7 +137,10 @@ export interface AnswerResponse {
 
 export interface TrailStep {
   step: string
-  kept: number
+  // 后端 provenance trail 首项(fetch)的 kept 是各召回渠道的计数 dict
+  // {vector:N, bm25:N, ...}(pipeline.py:494),其余项(fuse_rrf/rerank)是 int。
+  // 这里用联合类型表达;渲染时按类型分别处理,避免直接当数字显示成 [object Object]。
+  kept: number | Record<string, number>
 }
 
 export interface Provenance {

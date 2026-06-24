@@ -109,7 +109,7 @@ export const mockPack: StratifiedPack = {
     '腔体压力异常由压力传感器P-02监测 [1],表现为压力读数波动 [2],疑似由质量流量控制器MFC-1引起 [3]。怀疑MFC校准漂移这一假设正在排查MFC-1 [4]。',
   provenance: {
     trail: [
-      { step: 'fetch', kept: 12 },
+      { step: 'fetch', kept: { vector: 8, bm25: 4 } },
       { step: 'rerank', kept: 5 },
       { step: 'assemble', kept: 3 },
     ],

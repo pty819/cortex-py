@@ -104,6 +104,16 @@ const activeFact = computed<Fact | null>(() => {
 
 const packJson = computed(() => (pack.value ? JSON.stringify(pack.value, null, 2) : ''))
 
+// trail 首项(fetch)的 kept 是各召回渠道计数 dict {vector:N, bm25:N, ...},
+// 直接当数字渲染会变成 [object Object]。这里把 dict 展平成可读字符串,
+// int 则原样。
+function formatTrailKept(step: { step: string; kept: number | Record<string, number> }): string {
+  if (typeof step.kept === 'number') return String(step.kept)
+  return Object.entries(step.kept)
+    .map(([ch, n]) => `${ch}:${n}`)
+    .join(' · ')
+}
+
 const examples = [
   '腔体压力异常的根因是什么?',
   'MFC-1 相关的故障有哪些?',
@@ -201,7 +211,7 @@ const examples = [
                 v-for="step in pack.provenance.trail"
                 :key="step.step"
                 :label="step.step"
-                :value="step.kept"
+                :value="formatTrailKept(step)"
               />
             </NSpace>
           </NCollapseItem>
