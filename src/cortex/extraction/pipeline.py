@@ -235,7 +235,7 @@ def _llm_entity_link(name: str, etype: Optional[str], description: str,
     payload = _j.dumps({
         "new_entity": {"name": name, "type": etype, "description": description},
         "candidates": candidates,
-        "context": context_text[:2000],  # 截取上下文(超长时)
+        "context": context_text,  # 原始上下文原文
     }, ensure_ascii=False)
     raw = services.llm_chat("extraction", ENTITY_LINK_SYSTEM, payload, max_tokens=1024)
     data = services.parse_llm_json(raw)
