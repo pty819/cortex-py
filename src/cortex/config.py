@@ -53,6 +53,10 @@ class LLMTierCfg(BaseModel):
     timeout: int = 600
     max_retries: int = 2
     max_concurrent: int = 10
+    # 推理模型 think 过程吃大量 token,长文档抽取默认 16384 会被 finish_reason:
+    # length 截断。按 tier 单独配:extraction 给大(32768),answer/synthesis 给小。
+    # llm_chat() 不显式传 max_tokens 时读此值。
+    max_tokens: int = 16384
     structured_output_mode: Literal["json_schema", "json_object", "prompt"] = "json_schema"
 
 

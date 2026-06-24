@@ -36,6 +36,9 @@ llm:
     timeout: 600
     max_retries: 2
     max_concurrent: 10
+    # 推理模型 think 过程吃大量 token,长文档(6.5KB+)结构抽取默认 16384 会被
+    # finish_reason: length 截断导致 content 来不及输出。提到 32768 留够空间。
+    max_tokens: 32768
     # R1 fallback 链:json_schema → json_object → 纯 prompt
     structured_output_mode: json_schema          # json_schema | json_object | prompt
   answer:
