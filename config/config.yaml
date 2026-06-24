@@ -49,6 +49,9 @@ llm:
     temperature: 0.0
     timeout: 600
     max_retries: 2
+    # 召回的事实/belief 量大时,答案需要足够输出空间;Minimax-M3 是推理模型,
+    # think 段也吃 token,默认 16384 可能不够。提到 32768 留足空间。
+    max_tokens: 32768
   synthesis:
     provider: openai-compatible
     model: Minimax-M3
@@ -57,6 +60,9 @@ llm:
     temperature: 0.0
     timeout: 600
     max_retries: 2
+    # synthesis 负责把召回的多跳证据/上下文块综合成叙述,输入数据量同样大。
+    # 推理模型 + 大召回池,默认 16384 不保险,提到 32768。
+    max_tokens: 32768
   verifier:                                      # 可选,默认关
     enabled: false
     model: Minimax-M3
