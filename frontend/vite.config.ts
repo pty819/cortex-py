@@ -13,9 +13,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // Dev proxy: /v1 → FastAPI backend at :8002
+      // Dev proxy: /v1 → FastAPI backend at :8000
       '/v1': {
-        target: 'http://localhost:8002',
+        target: 'http://localhost:8000',
         changeOrigin: true,
       },
     },
