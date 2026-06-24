@@ -44,8 +44,11 @@ export type LifecycleKind = 'captured' | 'extracted' | 'indexed' | 'failed'
 export interface LifecycleFrame {
   kind: LifecycleKind
   event_id: string
-  facts_extracted?: number
+  // 后端 lifecycle 帧返回 {kind, event_id, ts, scope, payload:{...}}(见 core.py:
+  // list_lifecycle_since)。facts_extracted 等明细放在 payload 子对象里,不在顶层。
   ts?: string
+  scope?: string
+  payload?: Record<string, unknown>
   message?: string
 }
 

@@ -54,7 +54,10 @@ let unsubscribe: (() => void) | null = null
 
 const extractedCount = computed(() => {
   const f = frames.value.find((x) => x.kind === 'extracted')
-  return f?.facts_extracted ?? null
+  // 后端把 facts_extracted 放在帧的 payload 子对象里(core.py:236 /
+  // pipeline.py:376),不在顶层。这里从 payload 读。
+  const n = f?.payload?.facts_extracted
+  return typeof n === 'number' ? n : null
 })
 
 function newIdempotencyKey() {
@@ -231,8 +234,8 @@ const responseJson = computed(() => (response.value ? JSON.stringify(response.va
           <ul v-else class="frame-list">
             <li v-for="(f, idx) in frames" :key="idx" class="frame-item">
               <NTag :type="kindTagType(f.kind)" size="small" round>{{ f.kind }}</NTag>
-              <span v-if="f.kind === 'extracted'" class="frame-extra">
-                <strong>{{ f.facts_extracted }}</strong> facts extracted
+              <span v-if="f.kind === 'extracted' && f.payload?.facts_extracted != null" class="frame-extra">
+                <strong>{{ f.payload.facts_extracted }}</strong> facts extracted
               </span>
               <span v-if="f.kind === 'indexed'" class="frame-extra">indexed into graph</span>
               <span v-if="f.ts" class="frame-ts">{{ new Date(f.ts).toLocaleTimeString() }}</span>
