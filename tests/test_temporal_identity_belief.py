@@ -78,7 +78,7 @@ def test_contextual_entity_resolution_keeps_same_alias_separate(test_scope):
 
 def test_vector_similarity_cannot_merge_incompatible_equipment_context(test_scope, monkeypatch):
     seed_diagnosis_vocab(test_scope)
-    monkeypatch.setattr("cortex.extraction.pipeline.services.embed_one", lambda text: [0.01] * 1024)
+    monkeypatch.setattr("cortex.extraction.pipeline.services.embed_one", lambda text, **kwargs: [0.01] * 1024)
     for idx, (name, fab) in enumerate((("PM-1", "FAB 1"), ("PM1", "FAB 2"))):
         eid, _ = append_event(scope=test_scope, modality="imported", content={"kind": "triple", "triple": {
             "subject": {"name": name, "type": "equipment"}, "predicate": "has_status",
@@ -96,7 +96,7 @@ def test_vector_similarity_cannot_merge_incompatible_equipment_context(test_scop
 
 def test_untyped_legacy_entity_is_not_reused_for_typed_equipment(test_scope, monkeypatch):
     seed_diagnosis_vocab(test_scope)
-    monkeypatch.setattr("cortex.extraction.pipeline.services.embed_one", lambda _text: [0.04] * 1024)
+    monkeypatch.setattr("cortex.extraction.pipeline.services.embed_one", lambda _text, **kwargs: [0.04] * 1024)
     for idx, etype in enumerate((None, "equipment")):
         eid, _ = append_event(scope=test_scope, modality="imported", content={"kind": "triple", "triple": {
             "subject": {"name": "PM-LEGACY", "type": etype}, "predicate": "has_status",
@@ -113,7 +113,7 @@ def test_untyped_legacy_entity_is_not_reused_for_typed_equipment(test_scope, mon
 
 def test_vector_lookup_filters_context_before_candidate_limit(test_scope, monkeypatch):
     seed_diagnosis_vocab(test_scope)
-    monkeypatch.setattr("cortex.extraction.pipeline.services.embed_one", lambda _text: [0.06] * 1024)
+    monkeypatch.setattr("cortex.extraction.pipeline.services.embed_one", lambda _text, **kwargs: [0.06] * 1024)
     for idx in range(6):
         eid, _ = append_event(scope=test_scope, modality="imported", content={"kind": "triple", "triple": {
             "subject": {"name": f"Pump-{idx}", "type": "component"}, "predicate": "has_status",
@@ -190,7 +190,7 @@ def test_later_positive_state_does_not_close_negative_evidence(test_scope):
 
 def test_identifier_prefix_prevents_same_number_entity_merge(test_scope, monkeypatch):
     seed_diagnosis_vocab(test_scope)
-    monkeypatch.setattr("cortex.extraction.pipeline.services.embed_one", lambda _text: [0.08] * 1024)
+    monkeypatch.setattr("cortex.extraction.pipeline.services.embed_one", lambda _text, **kwargs: [0.08] * 1024)
     for idx, identifier in enumerate(("P-02", "T-02", "MFC-1", "VALVE-1")):
         eid, _ = append_event(scope=test_scope, modality="imported", content={"kind": "triple", "triple": {
             "subject": {"name": identifier, "type": "sensor"}, "predicate": "has_status",

@@ -182,7 +182,7 @@ def _resolve_or_create(conn, scope: str, name: str, etype: Optional[str],
     else:
         cands = None
     # C 层:向量召回 top-5
-    emb = services.embed_one(load_config().extraction.embedding_text.format(name=name, description=description))
+    emb = services.embed_one(load_config().extraction.embedding_text.format(name=name, description=description), role="passage")
     cands = cands if cands is not None else conn.execute(text("""
         SELECT entity_id, canonical_name, description, entity_type, context_key,
                1-(embedding <=> CAST(:q AS vector)) AS cos

@@ -16,12 +16,28 @@ from .config import RerankCfg, EmbeddingCfg, LLMTierCfg, load_config, llm_config
 
 
 # ── embedding ──────────────────────────────────────────────────────────────
-def embed_texts(texts: List[str], cfg: Optional[EmbeddingCfg] = None) -> List[List[float]]:
+def _parse_param_string(param: str) -> Dict[str, str]:
+    """把 "input_type=query,task=search" → {"input_type":"query","task":"search"}
+       把 "query" → {"input_type":"query"}"""
+    if "=" in param:
+        out: Dict[str, str] = {}
+        for kv in param.split(","):
+            k, v = kv.strip().split("=", 1)
+            out[k] = v
+        return out
+    return {"input_type": param}
+
+
+def embed_texts(texts: List[str], cfg: Optional[EmbeddingCfg] = None,
+                extra_body: Optional[Dict[str, Any]] = None) -> List[List[float]]:
     """调 jina-v5 → 返回 dim=1024 向量列表(顺序对齐输入)。"""
     cfg = cfg or load_config().embedding
     url = cfg.api_base.rstrip("/") + "/embeddings"
+    body: Dict[str, Any] = {"model": cfg.model, "input": texts}
+    if extra_body:
+        body.update(extra_body)
     with httpx.Client(timeout=cfg.timeout) as cli:
-        r = cli.post(url, json={"model": cfg.model, "input": texts},
+        r = cli.post(url, json=body,
                      headers={"Authorization": f"Bearer {cfg.api_key}"})
         r.raise_for_status()
         data = r.json()["data"]
@@ -30,8 +46,13 @@ def embed_texts(texts: List[str], cfg: Optional[EmbeddingCfg] = None) -> List[Li
     return [d["embedding"] for d in data]
 
 
-def embed_one(text: str) -> List[float]:
-    return embed_texts([text])[0]
+def embed_one(text: str, role: str = "passage") -> List[float]:
+    cfg = load_config().embedding
+    extra: Dict[str, Any] = {}
+    if cfg.query_param and cfg.document_param:
+        param = cfg.query_param if role == "query" else cfg.document_param
+        extra.update(_parse_param_string(param))
+    return embed_texts([text], extra_body=extra or None)[0]
 
 
 # ── rerank ──────────────────────────────────────────────────────────────────

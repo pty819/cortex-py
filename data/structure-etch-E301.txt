@@ -1,0 +1,73 @@
+# 刻蚀系统E-301（ICP氧化物刻蚀系统）
+
+E-301 是 FAB-A 的 200mm 电感耦合等离子体（ICP）氧化物刻蚀系统，配置单腔体 C3。用于二氧化硅（SiO₂）和氮化硅（Si₃N₄）的介电材料刻蚀，兼容 Oxide_MainEtch_V2 等配方。系统包含气体输送系统、射频系统、真空系统、温控系统、等离子体腔体、传输系统和端点检测系统共七大子系统（刻蚀系统E-301 has_component 气体输送系统。刻蚀系统E-301 has_component 射频系统。刻蚀系统E-301 has_component 真空系统。刻蚀系统E-301 has_component 温控系统。刻蚀系统E-301 has_component 等离子体腔体。刻蚀系统E-301 has_component 传输系统。刻蚀系统E-301 has_component 端点检测系统。）。
+
+## 气体输送系统
+
+气体输送系统包含 MFC-101、MFC-102、MFC-103 和 MFC-104 四个质量流量控制器，以及气体分配喷淋头（showerhead，气体分配喷淋头 part_of 气体输送系统）。
+MFC-101 控制 CF₄ 气体流量，量程 0-200 sccm（MFC-101 part_of 气体输送系统）。
+MFC-102 控制 CHF₃ 气体流量，量程 0-100 sccm（MFC-102 part_of 气体输送系统）。
+MFC-103 控制 O₂ 气体流量，量程 0-100 sccm（MFC-103 part_of 气体输送系统）。
+MFC-104 控制 Ar 气体流量，量程 0-100 sccm（MFC-104 part_of 气体输送系统）。
+气体分配喷淋头安装在腔体顶部，负责将工艺气体均匀分布到腔体内。
+
+## 射频系统
+
+射频系统包含 RFG-301、RFG-302 和 MN-301（射频系统 has_component RFG-301。射频系统 has_component RFG-302。射频系统 has_component MN-301）。
+RFG-301 是 ICP 源射频发生器，13.56MHz，额定输出 0-2000W（RFG-301 part_of 射频系统）。
+RFG-302 是偏压射频发生器，13.56MHz，额定输出 0-1000W（RFG-302 part_of 射频系统）。
+MN-301 是射频匹配网络，负责匹配 RFG-301 和腔体之间的阻抗，包含负载电容和调谐电容（MN-301 part_of 射频系统）。
+
+## 真空系统
+
+真空系统包含 TV-301 涡轮分子泵、DP-301 干式真空泵、节流阀和 PT-301 Baratron 电容压力计（真空系统 has_component TV-301。真空系统 has_component DP-301。真空系统 has_component PT-301）。
+TV-301 涡轮泵提供高真空能力，额定抽速 1000L/s（TV-301 part_of 真空系统）。
+DP-301 干泵提供粗真空和前级支持，本底压力典型值 8 mTorr（DP-301 part_of 真空系统）。
+节流阀安装在腔体和涡轮泵之间，控制工艺压力。
+PT-301 是 Baratron 电容压力传感器，安装在腔体壁面，量程 1-100 mTorr，用于监测腔体工艺压力和本底压力。PT-301 monitored_by 腔体压力。PT-301 installed_on 腔体壁。
+
+## 温控系统
+
+温控系统包含 CH-301 循环冷却机、ESC-301 静电卡盘和 He 背吹系统（温控系统 has_component CH-301。温控系统 has_component ESC-301。温控系统 has_component He背吹系统）。
+CH-301 冷却机为静电卡盘和腔体壁提供循环冷却液，温度设定范围 -20 至 80°C（CH-301 part_of 温控系统）。
+ESC-301 静电卡盘负责吸附 wafer 并提供 He 背吹冷却，温度控制精度 ±0.5°C（ESC-301 part_of 温控系统）。ESC-301 内嵌热电偶温度传感器 ESC-TC，实时监测卡盘表面温度。ESC-TC monitored_by 静电卡盘温度。
+TC-301 是 K 型热电偶温度传感器，安装在腔体壁面，量程 0-200°C，用于监测腔体壁温度（TC-301 installed_on 腔体壁。TC-301 monitored_by 腔体壁温度）。
+He 背吹系统为 wafer 背面提供 He 气冷却（He背吹系统 part_of 温控系统）。He-P-301 监测 He 背吹压力，量程 0-20 Torr。He-FM-301 监测 He 背吹流量。He-P-301 monitored_by He背吹压力。He-FM-301 monitored_by He背吹流量。
+
+## 等离子体腔体
+
+等离子体腔体由腔体壁（阳极氧化铝）、Al₂O₃ 介质窗、ICP 耦合线圈、聚焦环（Si材质）和 O-ring-301 密封圈组成（等离子体腔体 has_component Al₂O₃介质窗。等离子体腔体 has_component ICP耦合线圈。等离子体腔体 has_component 聚焦环。等离子体腔体 has_component O-ring-301）。
+腔体壁是阳极氧化铝材质，作为等离子体反应容器。
+Al₂O₃ 介质窗安装在腔体顶部，RF 功率通过介质窗耦合到腔体内（Al₂O₃介质窗 part_of 等离子体腔体）。
+ICP 耦合线圈安装在介质窗上方，与 RFG-301 连接（ICP耦合线圈 part_of 等离子体腔体）。
+聚焦环是 Si 材质，环绕 wafer 边缘，控制离子入射角度（聚焦环 part_of 等离子体腔体）。
+O-ring-301 密封圈安装在腔体门和介质窗法兰处（O-ring-301 part_of 等离子体腔体）。
+
+## 传输系统
+
+传输系统包含 LoadLock-301 真空锁和 RobotArm-301 机械手臂（传输系统 has_component LoadLock-301。传输系统 has_component RobotArm-301）。
+LoadLock-301 真空锁用于 wafer 进出腔体，保证腔体始终处于真空状态（LoadLock-301 part_of 传输系统）。
+RobotArm-301 机械手臂将 wafer 从 LoadLock 传输至 ESC-301（RobotArm-301 part_of 传输系统）。
+
+## 端点检测系统
+
+端点检测系统包含 OES-301 光学发射光谱传感器（端点检测系统 has_component OES-301）。
+OES-301 光学发射光谱传感器通过腔体窗口监测等离子体发射光谱，覆盖波长范围 200-800nm。用于刻蚀终点检测和腔体状态监控。OES-301 monitored_by 等离子体发射光谱。OES-301 installed_on 等离子体腔体窗口视口。
+OES-301 监测的特征波长包括 F（704nm）、CF₂（260nm）、CO（483nm）、Ar（750nm）和 C₂（516nm）。
+
+## 传感器汇总
+
+RF-FP-301 是 RF 功率传感器，用于监测 RFG-301 正向输出功率（RF-FP-301 monitored_by RF正向功率）。
+RF-RP-301 是 RF 功率传感器，用于监测 RF 反射功率（RF-RP-301 monitored_by RF反射功率）。
+DC-BIAS 是电压传感器，用于监测偏压电极的自偏压（DC-BIAS monitored_by 偏压电极DC Bias）。
+TV-POS 是位置传感器，用于监测节流阀开度位置（TV-POS monitored_by 节流阀位置）。
+TP-SPEED 是转速传感器，用于监测 TV-301 涡轮泵转速（TP-SPEED monitored_by 涡轮泵转速）。
+
+传感器 controlled_by 刻蚀系统E-301。
+气体输送系统 controlled_by 刻蚀系统E-301。
+射频系统 controlled_by 刻蚀系统E-301。
+真空系统 controlled_by 刻蚀系统E-301。
+温控系统 controlled_by 刻蚀系统E-301。
+等离子体腔体 controlled_by 刻蚀系统E-301。
+传输系统 controlled_by 刻蚀系统E-301。
+端点检测系统 controlled_by 刻蚀系统E-301。

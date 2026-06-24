@@ -12,6 +12,8 @@ embedding:
   api_base: http://192.168.1.238:8000/v1        # 只到 /v1,端点路径由 worker 拼(/embeddings)
   model: jina-embeddings-v5-text-small
   dimension: 1024                                # ⚠️ 必须 == schema 里 vector(1024)
+  query_param: "input_type=query"                # 检索用 input_type
+  document_param: "input_type=passage"           # 入库用 input_type
   max_concurrent: 10
   timeout: 60
 

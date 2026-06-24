@@ -264,14 +264,14 @@ def recall(*, scope: str, query: Optional[str] = None, view: str = "local",
 
     # ── Phase 0: query embedding + HyDE(无 DB session,纯 HTTP)──
     t0 = time.time()
-    q_emb = services.embed_one(query)
+    q_emb = services.embed_one(query, role="query")
     extra_embs: List[List[float]] = []
     if adv.hyde_enabled and services.llm_configured("synthesis"):
         try:
             for _ in range(adv.hyde_passages):
                 raw = services.llm_chat("synthesis",
                     "写一段假设性回答(假设记忆里有答案),纯文本无前缀。", query)
-                extra_embs.append(services.embed_one(services.strip_think(raw)))
+                extra_embs.append(services.embed_one(services.strip_think(raw), role="query"))
         except Exception:  # noqa: BLE001
             pass
     t["plan"] = (time.time() - t0) * 1000

@@ -47,7 +47,7 @@ def test_negation_is_recallable_metadata_not_positive_assertion(test_scope):
         row = conn.execute(text("SELECT polarity, assertion_status, evidence_span FROM facts WHERE fact_id=CAST(:f AS uuid)"),
                            {"f": result["fact_ids"][0]}).one()
         lexical = _chan_bm25(conn, test_scope, "local", "EtchRateDrop", 20)
-        graph = _chan_graph(conn, test_scope, "local", services.embed_one("EtchRateDrop"), 2, 20)
+        graph = _chan_graph(conn, test_scope, "local", services.embed_one("EtchRateDrop", role="query"), 2, 20)
     assert (row.polarity, row.assertion_status) == ("negative", "ruled_out")
     assert row.evidence_span == "排查确认不是腔体泄漏"
     assert result["fact_ids"][0] in lexical
@@ -134,7 +134,7 @@ def test_graph_channel_excludes_hypothesis_but_keeps_confirmed_causal(test_scope
         "assertion_status": "confirmed", "evidence_span": "跨子系统时间序列复现并通过干预确认",
     })
     with session_scope() as conn:
-        found = _chan_graph(conn, test_scope, "local", services.embed_one("FaultC"), 2, 20)
+        found = _chan_graph(conn, test_scope, "local", services.embed_one("FaultC", role="query"), 2, 20)
     assert confirmed["fact_ids"][0] in found
     assert hypothesis["fact_ids"][0] not in found
 
@@ -158,7 +158,7 @@ def test_explicit_exclusion_predicates_are_not_positive_graph_edges(test_scope):
     with session_scope() as conn:
         row = conn.execute(text("SELECT polarity, assertion_status FROM facts WHERE fact_id=CAST(:f AS uuid)"),
                            {"f": result["fact_ids"][0]}).one()
-        found = _chan_graph(conn, test_scope, "local", services.embed_one("RF故障假设"), 2, 20)
+        found = _chan_graph(conn, test_scope, "local", services.embed_one("RF故障假设", role="query"), 2, 20)
     assert row == ("negative", "ruled_out")
     assert result["fact_ids"][0] not in found
 
@@ -168,7 +168,7 @@ def test_grounded_llm_confirmation_can_enter_causal_graph(test_scope, monkeypatc
     evidence = "更换密封圈后压力恢复，复装旧件后故障再次出现"
     body = f"PM1 压力异常。{evidence}。"
     monkeypatch.setattr("cortex.extraction.pipeline.services.llm_configured", lambda _tier: True)
-    monkeypatch.setattr("cortex.extraction.pipeline.services.embed_one", lambda _text: [0.02] * 1024)
+    monkeypatch.setattr("cortex.extraction.pipeline.services.embed_one", lambda _text, **kwargs: [0.02] * 1024)
     monkeypatch.setattr("cortex.extraction.pipeline._llm_extract", lambda *_args, **_kwargs: {
         "entities": [
             {"name": "PM1压力异常", "type": "fault", "description": "PM1压力异常"},
@@ -220,7 +220,7 @@ def test_prompt_injection_text_cannot_bypass_closed_predicate_quarantine(test_sc
 def test_ungrounded_llm_confirmation_remains_hypothesis(test_scope, monkeypatch):
     seed_diagnosis_vocab(test_scope)
     monkeypatch.setattr("cortex.extraction.pipeline.services.llm_configured", lambda _tier: True)
-    monkeypatch.setattr("cortex.extraction.pipeline.services.embed_one", lambda _text: [0.03] * 1024)
+    monkeypatch.setattr("cortex.extraction.pipeline.services.embed_one", lambda _text, **kwargs: [0.03] * 1024)
     monkeypatch.setattr("cortex.extraction.pipeline._llm_extract", lambda *_args, **_kwargs: {
         "entities": [{"name": "Fault", "type": "fault", "description": "Fault"},
                      {"name": "Cause", "type": "component", "description": "Cause"}],
@@ -275,7 +275,7 @@ def test_contradicts_opposes_target_belief_without_negating_evidence_subject(tes
                                       JOIN entities e ON e.entity_id=b.about_entity_id
                                       WHERE b.scope=:s AND b.recorded_to IS NULL"""),
                                {"s": test_scope}).all()
-        graph = _chan_graph(conn, test_scope, "local", services.embed_one("MFC校准合格"), 2, 20)
+        graph = _chan_graph(conn, test_scope, "local", services.embed_one("MFC校准合格", role="query"), 2, 20)
     assert fact == ("positive", "observed")
     assert beliefs == [("MFC漂移假设", "likely_false")]
     assert result["fact_ids"][0] not in graph
@@ -283,7 +283,7 @@ def test_contradicts_opposes_target_belief_without_negating_evidence_subject(tes
 
 def test_numeric_process_parameters_never_merge_by_vector_similarity(test_scope, monkeypatch):
     seed_diagnosis_vocab(test_scope)
-    monkeypatch.setattr("cortex.extraction.pipeline.services.embed_one", lambda _text: [0.05] * 1024)
+    monkeypatch.setattr("cortex.extraction.pipeline.services.embed_one", lambda _text, **kwargs: [0.05] * 1024)
     for idx, watts in enumerate(("RF1500W", "RF1600W")):
         _triple(test_scope, f"numeric-param-{idx}", {
             "subject": {"name": "MainEtch", "type": "process_step"},
@@ -306,7 +306,7 @@ def test_numeric_process_parameters_never_merge_by_vector_similarity(test_scope,
 
 def test_recipe_step_preserves_distinct_parameter_families(test_scope, monkeypatch):
     seed_diagnosis_vocab(test_scope)
-    monkeypatch.setattr("cortex.extraction.pipeline.services.embed_one", lambda _text: [0.07] * 1024)
+    monkeypatch.setattr("cortex.extraction.pipeline.services.embed_one", lambda _text, **kwargs: [0.07] * 1024)
     for idx, parameter in enumerate(("RF1500W", "Pressure50mTorr", "Flow100sccm")):
         _triple(test_scope, f"parameter-family-{idx}", {
             "subject": {"name": "MainEtch", "type": "process_step"},
@@ -324,7 +324,7 @@ def test_recipe_step_preserves_distinct_parameter_families(test_scope, monkeypat
 
 def test_graph_hop_boundary_and_cycle_prevention(test_scope, monkeypatch):
     seed_diagnosis_vocab(test_scope)
-    def node_embedding(value):
+    def node_embedding(value, **kwargs):
         for offset, name in enumerate(("NodeA", "NodeB", "NodeC")):
             if name in value:
                 return [0.0] * offset + [1.0] + [0.0] * (1023 - offset)

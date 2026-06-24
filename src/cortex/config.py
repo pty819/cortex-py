@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
@@ -28,6 +28,8 @@ class EmbeddingCfg(BaseModel):
     api_base: str
     model: str
     dimension: int
+    query_param: Optional[str] = None
+    document_param: Optional[str] = None
     max_concurrent: int = 10
     timeout: int = 60
 

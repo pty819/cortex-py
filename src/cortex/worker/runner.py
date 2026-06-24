@@ -57,7 +57,7 @@ def _dispatch(job: dict) -> dict:
             rows = conn.execute(_t("SELECT entity_id::text, canonical_name, description FROM entities WHERE embedding IS NULL AND merged_into IS NULL AND scope=:s LIMIT 100"), {"s": scope}).fetchall()
             for r in rows:
                 try:
-                    emb = services.embed_one(_lc().extraction.embedding_text.format(name=r[1], description=r[2] or r[1]))
+                    emb = services.embed_one(_lc().extraction.embedding_text.format(name=r[1], description=r[2] or r[1]), role="passage")
                     conn.execute(_t("UPDATE entities SET embedding=CAST(:e AS vector) WHERE entity_id=CAST(:id AS uuid)"),
                                  {"e": str(emb), "id": r[0]})
                     n += 1
