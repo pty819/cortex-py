@@ -39,13 +39,22 @@ export interface ExperienceResponse {
   lifecycle_stream: string
 }
 
-export type LifecycleKind = 'captured' | 'extracted' | 'indexed' | 'failed'
+export type LifecycleKind =
+  | 'captured'
+  | 'extracted'
+  | 'indexed'
+  | 'failed'
+  | 'consolidated'   // wait=consolidated 流程会出现的正常帧(core.py:_STAGE_ORDER)
+  | 'forgotten'      // /v1/forget 触发(app.py:388)
 
 export interface LifecycleFrame {
   kind: LifecycleKind
   event_id: string
-  facts_extracted?: number
+  // 后端 lifecycle 帧返回 {kind, event_id, ts, scope, payload:{...}}(见 core.py:
+  // list_lifecycle_since)。facts_extracted 等明细放在 payload 子对象里,不在顶层。
   ts?: string
+  scope?: string
+  payload?: Record<string, unknown>
   message?: string
 }
 
@@ -74,6 +83,20 @@ export interface FactsResponse {
   items: Fact[]
 }
 
+// 后端 GET /v1/beliefs 返回结构(app.py:list_beliefs)
+export interface Belief {
+  belief_id: string
+  stance: string
+  claim: string
+  confidence: number
+  about: ActorRef
+  supports: string[]
+}
+
+export interface BeliefsResponse {
+  items: Belief[]
+}
+
 export interface TimelineVersion {
   fact_id: string
   object_value: string
@@ -100,7 +123,9 @@ export interface AnswerRequest {
 export interface Citation {
   marker: string
   layer: string
-  fact_id?: string
+  // 后端 Citation schema 字段名是 `id`(见 schemas.py:Citation),非 `fact_id`。
+  // 这里必须与后端对齐,否则 QaView 点击 [n] 引用查 factCache 时取不到值。
+  id?: string
 }
 
 export interface AnswerResponse {
@@ -112,7 +137,10 @@ export interface AnswerResponse {
 
 export interface TrailStep {
   step: string
-  kept: number
+  // 后端 provenance trail 首项(fetch)的 kept 是各召回渠道的计数 dict
+  // {vector:N, bm25:N, ...}(pipeline.py:494),其余项(fuse_rrf/rerank)是 int。
+  // 这里用联合类型表达;渲染时按类型分别处理,避免直接当数字显示成 [object Object]。
+  kept: number | Record<string, number>
 }
 
 export interface Provenance {

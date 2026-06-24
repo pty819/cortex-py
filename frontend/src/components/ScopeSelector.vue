@@ -16,7 +16,7 @@ function onChange(value: string | null) {
 }
 
 function reset() {
-  store.setScope(store.presets[0] ?? 'org:acme/dept:sales/user:alice')
+  store.setScope(store.presets[0] ?? 'org:fab-a/etch:E301')
 }
 </script>
 
@@ -29,7 +29,7 @@ function reset() {
       filterable
       tag
       size="small"
-      placeholder="org:acme/dept:sales/user:alice"
+      placeholder="org:fab-a/etch:E301"
       style="min-width: 320px"
       @update:value="onChange"
     />

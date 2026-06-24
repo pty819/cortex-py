@@ -10,14 +10,17 @@ import type {
   AnswerRequest,
   AnswerResponse,
   LifecycleFrame,
+  BeliefsResponse,
 } from '@/types'
 
 // Hardcoded demo credentials per the task contract.
 const AUTH_TOKEN = 'dev-key'
 const ACTOR = 'user:alice'
 
+// 后端本体论是半导体设备故障诊断(prompts.py PROJECT_CONTEXT);旧的
+// org:acme/dept:sales 是 CRM 模板残留,与 demo 数据 scope 不符。
 const EXAMPLE_SCOPES = [
-  'org:acme/dept:sales/user:alice',
+  'org:fab-a/etch:E301',
 ]
 
 // 动态从 DB 拉 scope 列表(失败时回退到预设)
@@ -32,7 +35,7 @@ export async function fetchScopes(): Promise<string[]> {
 }
 
 export const DEFAULT_SCOPE: string =
-  EXAMPLE_SCOPES[0] ?? 'org:acme/dept:sales/user:alice'
+  EXAMPLE_SCOPES[0] ?? 'org:fab-a/etch:E301'
 export { EXAMPLE_SCOPES }
 
 const http = axios.create({
@@ -113,6 +116,12 @@ export function getTimeline(
 ): Promise<TimelineResponse> {
   return http
     .get<TimelineResponse>('/facts/timeline', { params: { scope, subject, predicate } })
+    .then((r) => r.data)
+}
+
+export function getBeliefs(scope: string): Promise<BeliefsResponse> {
+  return http
+    .get<BeliefsResponse>('/beliefs', { params: { scope } })
     .then((r) => r.data)
 }
 

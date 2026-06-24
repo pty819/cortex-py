@@ -88,13 +88,35 @@ const network = shallowRef<Network | null>(null)
 const nodes = new DataSet<any>([])
 const edges = new DataSet<any>([])
 
-// Color palette by entity type
+// Color palette by entity type — 对齐后端本体论(prompts.py 实体类型表)。
+// 旧的 {org,person,deal,channel,project} 是 CRM 模板残留,与半导体设备诊断
+// 本体论零交集,导致所有节点 fallback 到灰色、颜色编码与图例全部失效。
+// 按三大类用色系区分:物理结构=蓝/青系,故障诊断=红/橙系,诊断过程=紫/绿系。
 const TYPE_COLORS: Record<string, string> = {
-  org: '#3b82f6',
-  person: '#10b981',
-  deal: '#f59e0b',
-  channel: '#8b5cf6',
-  project: '#ec4899',
+  // ── 物理结构类(蓝/青系)──
+  equipment: '#2563eb',       // 设备/整机
+  subsystem: '#0891b2',       // 子系统/功能模块
+  component: '#0d9488',       // 具体部件
+  sensor: '#0ea5e9',          // 传感器/仪表
+  controller: '#6366f1',      // 控制单元
+  process_param: '#14b8a6',   // 工艺参数
+  process_step: '#22d3ee',    // 工艺步骤
+  material: '#3b82f6',        // 材料/介质
+  phenomenon: '#0284c7',      // 物理/化学现象
+  chamber_state: '#1d4ed8',   // 腔体状态/条件
+  metrology_result: '#0e7490',// 量测/计量结果
+  // ── 故障诊断类(红/橙系)──
+  fault: '#dc2626',           // 故障/异常状态
+  symptom: '#ea580c',         // 可观测征兆
+  signal_pattern: '#f59e0b',  // 信号特征模式
+  // ── 诊断过程类(紫/绿系)──
+  hypothesis: '#9333ea',      // 诊断假设/嫌疑方向
+  evidence: '#16a34a',        // 诊断证据
+  diagnostic_action: '#65a30d',// 排查动作
+  correlation: '#7c3aed',     // 相关性发现
+  measure: '#15803d',         // 维修/处理措施
+  person: '#10b981',          // 相关人员
+  historical_ref: '#8b5cf6',  // 历史案例引用
   default: '#6b7280',
 }
 const DEFAULT_NODE_COLOR = '#6b7280'

@@ -11,33 +11,35 @@ import {
   type DataTableColumns,
 } from 'naive-ui'
 import { computed, h, ref, watch } from 'vue'
-import { getFacts, getEntities } from '@/api'
+import { getFacts, getEntities, getBeliefs } from '@/api'
 import { useScopeStore } from '@/stores/scope'
 import { useSettingsStore } from '@/stores/settings'
-import type { Entity, Fact } from '@/types'
+import type { Entity, Fact, Belief } from '@/types'
 
 const scopeStore = useScopeStore()
 const settings = useSettingsStore()
 
 const facts = ref<Fact[]>([])
 const entities = ref<Entity[]>([])
+const beliefs = ref<Belief[]>([])
 const loading = ref(false)
 const page = ref(1)
 const pageSize = ref(10)
 
-// Events / beliefs aren't separate list endpoints in the contract — we synthesize
-// a lightweight "events" view by reading recent facts as event-ish rows and a
-// static "beliefs" placeholder. This keeps Browse useful with the given API.
+// Beliefs 现在从真实端点 GET /v1/beliefs 拉取(对齐 app.py:list_beliefs);
+// Events 仍由最近 facts 派生(后端尚无 /v1/events 直读端点)。
 
 async function load() {
   loading.value = true
   try {
-    const [f, e] = await Promise.all([
+    const [f, e, b] = await Promise.all([
       getFacts(scopeStore.scope),
       getEntities(scopeStore.scope),
+      getBeliefs(scopeStore.scope).catch(() => ({ items: [] })),
     ])
     facts.value = f.items
     entities.value = e.items
+    beliefs.value = b.items
   } finally {
     loading.value = false
   }
@@ -122,11 +124,6 @@ const eventColumns: DataTableColumns = [
   { title: 'Conf', key: 'conf', render: (row: any) => `${Math.round(row.conf * 100)}%`, width: 70 },
 ]
 
-const beliefs = ref([
-  { id: 'b1', text: 'Q3 Renewal is at risk until countersigned.', source: 'derived' },
-  { id: 'b2', text: 'Priya is the primary owner for Acme enterprise renewals.', source: 'derived' },
-])
-
 const rowCount = computed(() => (tab: string) => {
   if (tab === 'facts') return facts.value.length
   if (tab === 'entities') return entities.value.length
@@ -187,9 +184,11 @@ const rowCount = computed(() => (tab: string) => {
       <NTabPane name="beliefs" :tab="`Beliefs (${beliefs.length})`">
         <NEmpty v-if="beliefs.length === 0" description="No beliefs recorded." />
         <ul v-else class="belief-list">
-          <li v-for="b in beliefs" :key="b.id" class="belief-item">
-            <NTag size="tiny" round>{{ b.source }}</NTag>
-            <span>{{ b.text }}</span>
+          <li v-for="b in beliefs" :key="b.belief_id" class="belief-item">
+            <NTag size="tiny" round>{{ b.stance }}</NTag>
+            <span class="belief-claim">{{ b.claim }}</span>
+            <span class="muted small">关于 <strong>{{ b.about.name }}</strong></span>
+            <span class="belief-conf">{{ Math.round(b.confidence * 100) }}%</span>
           </li>
         </ul>
       </NTabPane>
@@ -227,6 +226,14 @@ const rowCount = computed(() => (tab: string) => {
   background: var(--cortex-bg);
   border-radius: 8px;
   font-size: 13px;
+}
+.belief-claim {
+  flex: 1;
+}
+.belief-conf {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--cortex-muted);
 }
 :deep(.cell-emph) {
   font-weight: 600;

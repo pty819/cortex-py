@@ -25,7 +25,7 @@ import { getFacts } from '@/api'
 const scopeStore = useScopeStore()
 const message = useMessage()
 
-const query = ref('Who owns the Q3 renewal?')
+const query = ref('腔体压力异常的根因是什么?')
 const loading = ref(false)
 const error = ref<string | null>(null)
 const answer = ref<AnswerResponse | null>(null)
@@ -97,17 +97,28 @@ function toggleCitation(c: Citation) {
 
 const activeFact = computed<Fact | null>(() => {
   const c = answer.value?.citations.find((x) => x.marker === activeCitation.value)
-  if (!c?.fact_id) return null
-  return factCache.value[c.fact_id] || null
+  // 后端 citation 字段是 `id`(非 `fact_id`),见 types/index.ts Citation 注释
+  if (!c?.id) return null
+  return factCache.value[c.id] || null
 })
 
 const packJson = computed(() => (pack.value ? JSON.stringify(pack.value, null, 2) : ''))
 
+// trail 首项(fetch)的 kept 是各召回渠道计数 dict {vector:N, bm25:N, ...},
+// 直接当数字渲染会变成 [object Object]。这里把 dict 展平成可读字符串,
+// int 则原样。
+function formatTrailKept(step: { step: string; kept: number | Record<string, number> }): string {
+  if (typeof step.kept === 'number') return String(step.kept)
+  return Object.entries(step.kept)
+    .map(([ch, n]) => `${ch}:${n}`)
+    .join(' · ')
+}
+
 const examples = [
-  'Who owns the Q3 renewal?',
-  'What is the status of the Q3 renewal?',
-  'Who approves deals at Acme?',
-  'What is Acme Corp ARR?',
+  '腔体压力异常的根因是什么?',
+  'MFC-1 相关的故障有哪些?',
+  '哪些传感器监测腔体压力?',
+  '腔体压力异常有哪些征兆?',
 ]
 </script>
 
@@ -200,7 +211,7 @@ const examples = [
                 v-for="step in pack.provenance.trail"
                 :key="step.step"
                 :label="step.step"
-                :value="step.kept"
+                :value="formatTrailKept(step)"
               />
             </NSpace>
           </NCollapseItem>
