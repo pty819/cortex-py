@@ -36,6 +36,9 @@ llm:
     timeout: 600
     max_retries: 2
     max_concurrent: 10
+    # 推理模型 think 过程吃大量 token,长文档(6.5KB+)结构抽取默认 16384 会被
+    # finish_reason: length 截断导致 content 来不及输出。提到 32768 留够空间。
+    max_tokens: 32768
     # R1 fallback 链:json_schema → json_object → 纯 prompt
     structured_output_mode: json_schema          # json_schema | json_object | prompt
   answer:
@@ -46,6 +49,9 @@ llm:
     temperature: 0.0
     timeout: 600
     max_retries: 2
+    # 召回的事实/belief 量大时,答案需要足够输出空间;Minimax-M3 是推理模型,
+    # think 段也吃 token,默认 16384 可能不够。提到 32768 留足空间。
+    max_tokens: 32768
   synthesis:
     provider: openai-compatible
     model: Minimax-M3
@@ -54,6 +60,9 @@ llm:
     temperature: 0.0
     timeout: 600
     max_retries: 2
+    # synthesis 负责把召回的多跳证据/上下文块综合成叙述,输入数据量同样大。
+    # 推理模型 + 大召回池,默认 16384 不保险,提到 32768。
+    max_tokens: 32768
   verifier:                                      # 可选,默认关
     enabled: false
     model: Minimax-M3

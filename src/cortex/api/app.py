@@ -129,15 +129,20 @@ async def lifecycle_stream(request: Request, event_id: str = Query(None), scope:
 
 # ── 层直读 ──────────────────────────────────────────────────────────────────
 @app.get("/v1/entities")
-def list_entities(scope: str, q: str = Query(None), limit: int = 100, actor: str = Depends(auth)):
+def list_entities(scope: str, q: str = Query(None), limit: int = 0, actor: str = Depends(auth)):
+    # limit<=0 表示不截断(默认全量):前端 Graph/Browse 不传 limit 时不应被静默截断。
+    # 保留参数是为未来真分页留口子。
     with session_scope() as c:
         sql = """SELECT entity_id::text, canonical_name, entity_type, description, merged_into::text
                  FROM entities WHERE scope=:s AND merged_into IS NULL"""
-        p: dict = {"s": scope, "lim": limit}
+        p: dict = {"s": scope}
         if q:
             sql += " AND (canonical_name ILIKE :q OR description ILIKE :q)"
             p["q"] = f"%{q}%"
-        sql += " ORDER BY created_at DESC LIMIT :lim"
+        sql += " ORDER BY created_at DESC"
+        if limit and limit > 0:
+            sql += " LIMIT :lim"
+            p["lim"] = limit
         rows = c.execute(text(sql), p).fetchall()
     return {"items": [dict(entity_id=r[0], canonical_name=r[1], entity_type=r[2],
                            description=r[3], merged_into=r[4]) for r in rows]}
@@ -146,8 +151,12 @@ def list_entities(scope: str, q: str = Query(None), limit: int = 100, actor: str
 @app.get("/v1/facts")
 def list_facts(scope: str, subject: str = Query(None), predicate: str = Query(None),
                as_of: str = Query(None), include_superseded: bool = Query(False),
-               limit: int = 100, actor: str = Depends(auth)):
-    """列出 facts。as_of 裁剪双轴;include_superseded=true 返回历史超替版本(recorded_to<=as_of)。"""
+               limit: int = 0, actor: str = Depends(auth)):
+    """列出 facts。as_of 裁剪双轴;include_superseded=true 返回历史超替版本(recorded_to<=as_of)。
+
+    limit<=0 表示不截断(默认全量):前端 Graph 页调用时不传 limit,过去默认 100
+    会静默截断 100 条以上的 facts 导致图谱显示不全。保留参数供未来真分页。
+    """
     sql = """SELECT f.fact_id::text, f.predicate, f.object_type, f.object_value,
                     o.canonical_name AS oname, s.canonical_name AS sname,
                     s.entity_id::text AS sid, o.entity_id::text AS oid,
@@ -155,7 +164,7 @@ def list_facts(scope: str, subject: str = Query(None), predicate: str = Query(No
              FROM facts f JOIN entities s ON s.entity_id=f.subject_id
              LEFT JOIN entities o ON o.entity_id=f.object_entity_id
              WHERE f.scope=:s"""
-    p: dict = {"s": scope, "lim": limit}
+    p: dict = {"s": scope}
     if not include_superseded:
         sql += " AND f.recorded_to IS NULL"
     if as_of:
@@ -168,14 +177,27 @@ def list_facts(scope: str, subject: str = Query(None), predicate: str = Query(No
         sql += " AND f.subject_id=CAST(:sub AS uuid)"; p["sub"] = subject
     if predicate:
         sql += " AND f.predicate=:pred"; p["pred"] = predicate
-    sql += " ORDER BY f.valid_from DESC NULLS LAST LIMIT :lim"
+    sql += " ORDER BY f.valid_from DESC NULLS LAST"
+    if limit and limit > 0:
+        sql += " LIMIT :lim"
+        p["lim"] = limit
     with session_scope() as c:
         rows = c.execute(text(sql), p).fetchall()
-    return {"items": [dict(fact_id=r[0], predicate=r[1],
-                           subject={"id": r[6], "name": r[5]},
-                           object=({"datatype": r[2], "value": r[4] or (r[3] or {}).get("value")}
-                                   if r[2] != "literal" else {"datatype": "literal", "value": (r[3] or {}).get("value")}),
-                           confidence=r[8], valid_from=r[9], valid_to=r[10]) for r in rows]}
+
+    def _row(r):
+        if r[2] != "literal":
+            # entity object:返回 id(实体 entity_id)供前端解析 incoming 边;
+            # value 用 canonical_name(落库时 object_value 为 None)。
+            obj = {"datatype": r[2], "value": r[4] or (r[3] or {}).get("value")}
+            if r[7]:
+                obj["id"] = r[7]
+        else:
+            obj = {"datatype": "literal", "value": (r[3] or {}).get("value")}
+        return dict(fact_id=r[0], predicate=r[1],
+                    subject={"id": r[6], "name": r[5]}, object=obj,
+                    confidence=r[8], valid_from=r[9], valid_to=r[10])
+
+    return {"items": [_row(r) for r in rows]}
 
 
 @app.get("/v1/facts/timeline", response_model=schemas.TimelineResponse)

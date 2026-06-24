@@ -84,17 +84,23 @@ def _llm_client(tier: str):
 
 def llm_chat(tier: str, system: str, user: str,
              response_format: Optional[Dict] = None,
-             max_tokens: int = 16384) -> str:
-    """同步调 LLM;返回 assistant 文本。max_tokens 默认 16384(推理模型需要大量 think+输出空间)。
-    不设 max_tokens 会被 API 默认值(~2000)截断复杂抽取的推理+JSON。"""
+             max_tokens: Optional[int] = None) -> str:
+    """同步调 LLM;返回 assistant 文本。
+
+    max_tokens 优先级:显式参数 > tier 配置 llm.<tier>.max_tokens(默认 16384)。
+    推理模型 think 过程吃大量 token,抽取长文档需在 config 里把 extraction 的
+    max_tokens 调到 32768,否则会被 finish_reason: length 截断。
+    传 None(默认)走配置;传具体值(如 entity-link 的 1024)则覆盖配置。
+    """
     c = _llm_client(tier)
     if c is None:
         raise LLMUnavailable(f"LLM tier '{tier}' 无 key(配置占位符)。")
-    client, model, _ = c
+    client, model, cfg = c
+    effective_max_tokens = max_tokens if max_tokens is not None else cfg.get("max_tokens", 16384)
     kwargs: Dict[str, Any] = {"model": model, "messages": [{"role": "system", "content": system},
                                                            {"role": "user", "content": user}],
                               "temperature": 0.0,
-                              "max_tokens": max_tokens}
+                              "max_tokens": effective_max_tokens}
     if response_format:
         kwargs["response_format"] = response_format
     resp = client.chat.completions.create(**kwargs)

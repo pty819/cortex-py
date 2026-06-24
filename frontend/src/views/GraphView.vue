@@ -41,11 +41,27 @@ const selectedId = ref<string | null>(null)
 const selectedEntity = computed(() =>
   entities.value.find((e) => e.entity_id === selectedId.value) || null,
 )
-const selectedFacts = computed(() =>
-  facts.value.filter(
-    (f) => f.subject.id === selectedId.value,
-  ),
-)
+// 同时包含该节点作为主语(outgoing)和宾语(incoming)的 facts。过去只筛
+// f.subject.id,导致点一个只作为宾语出现的节点时侧边栏看不到任何边。
+// 每条结果带方向标记,模板据此区分显示。
+interface SelectedFact {
+  fact: Fact
+  direction: 'out' | 'in'
+}
+const selectedFacts = computed<SelectedFact[]>(() => {
+  if (!selectedId.value) return []
+  const out: SelectedFact[] = []
+  facts.value.forEach((f) => {
+    if (f.subject.id === selectedId.value) {
+      out.push({ fact: f, direction: 'out' })
+    }
+    // incoming:节点作为实体宾语(literal 宾语没有 id,不算)
+    if (f.object.datatype === 'entity' && f.object.id === selectedId.value) {
+      out.push({ fact: f, direction: 'in' })
+    }
+  })
+  return out
+})
 
 // Timeline drawer state
 const drawerOpen = ref(false)
@@ -53,11 +69,15 @@ const timelinePredicate = ref<string>('')
 const timelineLoading = ref(false)
 const timelineData = ref<TimelineResponse | null>(null)
 
-// Distinct predicates for the selected subject
+// Distinct predicates for the selected node — include both outgoing (as
+// subject) and incoming (as object entity) so the timeline picker covers all
+// edges touching this node.
 const predicateOptions = computed<SelectOption[]>(() => {
   const set = new Set<string>()
   facts.value.forEach((f) => {
+    if (!selectedId.value) return
     if (f.subject.id === selectedId.value) set.add(f.predicate)
+    if (f.object.datatype === 'entity' && f.object.id === selectedId.value) set.add(f.predicate)
   })
   return [...set].map((p) => ({ label: p, value: p }))
 })
@@ -320,16 +340,34 @@ watch(
           </NDescriptions>
 
           <div class="section-title">Facts ({{ selectedFacts.length }})</div>
-          <div v-if="selectedFacts.length === 0" class="muted small">No facts reference this entity as subject.</div>
+          <div v-if="selectedFacts.length === 0" class="muted small">No facts reference this entity.</div>
           <ul v-else class="fact-list">
-            <li v-for="f in selectedFacts" :key="f.fact_id" class="fact-item">
-              <span class="pred">{{ f.predicate }}</span>
-              <span class="arrow">→</span>
-              <span class="obj">{{ f.object.value }}</span>
-              <NTag size="tiny" :type="f.object.datatype === 'entity' ? 'info' : 'default'" round>
-                {{ f.object.datatype }}
+            <li v-for="sf in selectedFacts" :key="sf.fact.fact_id + '-' + sf.direction" class="fact-item">
+              <NTag
+                size="tiny"
+                :type="sf.direction === 'out' ? 'success' : 'warning'"
+                round
+                :bordered="false"
+                class="dir-tag"
+                :title="sf.direction === 'out' ? 'outgoing: this node is the subject' : 'incoming: this node is the object'"
+              >
+                {{ sf.direction === 'out' ? '→ out' : '← in' }}
               </NTag>
-              <span class="conf">{{ Math.round(f.confidence * 100) }}%</span>
+              <template v-if="sf.direction === 'out'">
+                <span class="pred">{{ sf.fact.predicate }}</span>
+                <span class="arrow">→</span>
+                <span class="obj">{{ sf.fact.object.value }}</span>
+              </template>
+              <template v-else>
+                <!-- incoming:展示另一端的主语 → 本节点 -->
+                <span class="obj">{{ sf.fact.subject.name }}</span>
+                <span class="arrow">→</span>
+                <span class="pred">{{ sf.fact.predicate }}</span>
+              </template>
+              <NTag size="tiny" :type="sf.fact.object.datatype === 'entity' ? 'info' : 'default'" round>
+                {{ sf.fact.object.datatype }}
+              </NTag>
+              <span class="conf">{{ Math.round(sf.fact.confidence * 100) }}%</span>
             </li>
           </ul>
 

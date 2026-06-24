@@ -730,6 +730,37 @@ _SYS = ("Extract knowledge-graph triples from the text. Output JSON {entities:[{
         "subject/object names must match entity names verbatim. Be concise.")
 
 
+def _validate_extraction_shape(data: Dict[str, Any]) -> Tuple[bool, str]:
+    """校验 LLM 抽取结果是否结构完整(对照 _SCHEMA 的 required 契约)。
+
+    推理模型在 json_schema 模式下可能返回语法合法、但被 token 截断的残缺 JSON:
+    facts 数组中途断掉、半截对象缺必填字段。这种结果能被 parse_llm_json 解析,
+    却会被 _llm_extract 当作成功采信并阻断 fallback 链(静默失败)。本函数对照
+    _SCHEMA 检查每个条目的必填字段齐全;残缺时返回 (False, reason),让调用方
+    继续走下一个 mode(真正的 fallback)。
+
+    entities/facts 可缺失或为空([])——模型确实没抽到东西也是合法结果。
+    """
+    ents = data.get("entities")
+    if ents is not None:
+        if not isinstance(ents, list):
+            return False, "entities is not a list"
+        for i, e in enumerate(ents):
+            if not isinstance(e, dict) or not e.get("name"):
+                return False, f"entities[{i}] missing required 'name'"
+    facts = data.get("facts")
+    if facts is not None:
+        if not isinstance(facts, list):
+            return False, "facts is not a list"
+        for i, f in enumerate(facts):
+            if not isinstance(f, dict):
+                return False, f"facts[{i}] is not an object"
+            for req in ("subject", "predicate", "object"):
+                if not f.get(req):
+                    return False, f"facts[{i}] missing required '{req}'"
+    return True, ""
+
+
 # ── triple 直写(前置 agent 产出的结构化三元组,零损失)──────────────────────
 def _direct_write_triple(conn, scope: str, triple: Dict[str, Any], observed_at,
                          event_id: str, thresholds, event_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -807,6 +838,14 @@ def _llm_extract(text_body: str, is_diagnosis: bool = False,
             raw = services.llm_chat("extraction", sys_msg, text_body, response_format=rf)
             data = services.parse_llm_json(raw)
             if isinstance(data, dict) and ("facts" in data or "entities" in data):
+                # 顶层键存在不等于结构完整:推理模型常因 finish_reason: length
+                # 返回语法合法但字段残缺的 JSON(如 facts 数组被截断、半截对象缺
+                # subject/predicate/object)。校验不通过则继续 fallback,避免静默
+                # 采信残缺数据。
+                ok, why = _validate_extraction_shape(data)
+                if not ok:
+                    last_err = f"mode {mode}: parsed but incomplete shape — {why}"
+                    continue
                 attempts.append(mode)
                 data["_mode"] = mode
                 return data
