@@ -183,11 +183,21 @@ def list_facts(scope: str, subject: str = Query(None), predicate: str = Query(No
         p["lim"] = limit
     with session_scope() as c:
         rows = c.execute(text(sql), p).fetchall()
-    return {"items": [dict(fact_id=r[0], predicate=r[1],
-                           subject={"id": r[6], "name": r[5]},
-                           object=({"datatype": r[2], "value": r[4] or (r[3] or {}).get("value")}
-                                   if r[2] != "literal" else {"datatype": "literal", "value": (r[3] or {}).get("value")}),
-                           confidence=r[8], valid_from=r[9], valid_to=r[10]) for r in rows]}
+
+    def _row(r):
+        if r[2] != "literal":
+            # entity object:返回 id(实体 entity_id)供前端解析 incoming 边;
+            # value 用 canonical_name(落库时 object_value 为 None)。
+            obj = {"datatype": r[2], "value": r[4] or (r[3] or {}).get("value")}
+            if r[7]:
+                obj["id"] = r[7]
+        else:
+            obj = {"datatype": "literal", "value": (r[3] or {}).get("value")}
+        return dict(fact_id=r[0], predicate=r[1],
+                    subject={"id": r[6], "name": r[5]}, object=obj,
+                    confidence=r[8], valid_from=r[9], valid_to=r[10])
+
+    return {"items": [_row(r) for r in rows]}
 
 
 @app.get("/v1/facts/timeline", response_model=schemas.TimelineResponse)

@@ -12,6 +12,9 @@ export interface ActorRef {
 export interface FactObject {
   datatype: ObjectType
   value: string
+  // entity 对象的 entity_id;literal 对象没有此字段。后端 /v1/facts 仅在
+  // object 为实体时返回,供前端解析 incoming 边(该节点作为宾语)。
+  id?: string
 }
 
 export interface ExperienceRequest {
