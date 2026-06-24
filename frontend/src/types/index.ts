@@ -100,7 +100,9 @@ export interface AnswerRequest {
 export interface Citation {
   marker: string
   layer: string
-  fact_id?: string
+  // 后端 Citation schema 字段名是 `id`(见 schemas.py:Citation),非 `fact_id`。
+  // 这里必须与后端对齐,否则 QaView 点击 [n] 引用查 factCache 时取不到值。
+  id?: string
 }
 
 export interface AnswerResponse {

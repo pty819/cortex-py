@@ -97,8 +97,9 @@ function toggleCitation(c: Citation) {
 
 const activeFact = computed<Fact | null>(() => {
   const c = answer.value?.citations.find((x) => x.marker === activeCitation.value)
-  if (!c?.fact_id) return null
-  return factCache.value[c.fact_id] || null
+  // 后端 citation 字段是 `id`(非 `fact_id`),见 types/index.ts Citation 注释
+  if (!c?.id) return null
+  return factCache.value[c.id] || null
 })
 
 const packJson = computed(() => (pack.value ? JSON.stringify(pack.value, null, 2) : ''))

@@ -122,9 +122,9 @@ export const mockPack: StratifiedPack = {
 export const mockAnswer: AnswerResponse = {
   answer: 'Priya Rao owns the Q3 Renewal [1]. It was signed on 2026-06-17 [2], approved by Jordan Lee [3].',
   citations: [
-    { marker: '[1]', layer: 'fact', fact_id: 'f_1' },
-    { marker: '[2]', layer: 'fact', fact_id: 'f_4' },
-    { marker: '[3]', layer: 'fact', fact_id: 'f_6' },
+    { marker: '[1]', layer: 'fact', id: 'f_1' },
+    { marker: '[2]', layer: 'fact', id: 'f_4' },
+    { marker: '[3]', layer: 'fact', id: 'f_6' },
   ],
   model_used: 'Minimax-M3',
   pack_id: 'pack-mock-0001',
