@@ -24,9 +24,9 @@ const scopeStore = useScopeStore()
 const settings = useSettingsStore()
 const message = useMessage()
 
-const modality = ref<Modality>('conversation')
+const modality = ref<Modality>('document')
 const role = ref<'user' | 'assistant' | 'system'>('user')
-const text = ref('Priya owns the Q3 renewal; she said it in standup.')
+const text = ref('E-301 在主工艺步骤中腔体压力出现周期性波动(±0.5mTorr),压力传感器P-02读数异常,疑似质量流量控制器MFC-1校准漂移导致。')
 const labels = ref('')
 
 const modalityOptions: SelectOption[] = [
@@ -147,10 +147,14 @@ function kindTagType(kind: string) {
       return 'default'
     case 'extracted':
       return 'info'
+    case 'consolidated':
+      return 'info'
     case 'indexed':
       return 'success'
     case 'failed':
       return 'error'
+    case 'forgotten':
+      return 'warning'
     default:
       return 'default'
   }
@@ -195,7 +199,7 @@ const responseJson = computed(() => (response.value ? JSON.stringify(response.va
           </NFormItem>
 
           <NFormItem label="Labels (comma separated, optional)">
-            <NInput v-model:value="labels" placeholder="renewal, q3, priya" />
+            <NInput v-model:value="labels" placeholder="etch, E301, pressure-anomaly" />
           </NFormItem>
 
           <NSpace justify="end">

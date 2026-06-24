@@ -39,7 +39,13 @@ export interface ExperienceResponse {
   lifecycle_stream: string
 }
 
-export type LifecycleKind = 'captured' | 'extracted' | 'indexed' | 'failed'
+export type LifecycleKind =
+  | 'captured'
+  | 'extracted'
+  | 'indexed'
+  | 'failed'
+  | 'consolidated'   // wait=consolidated 流程会出现的正常帧(core.py:_STAGE_ORDER)
+  | 'forgotten'      // /v1/forget 触发(app.py:388)
 
 export interface LifecycleFrame {
   kind: LifecycleKind
@@ -75,6 +81,20 @@ export interface Fact {
 
 export interface FactsResponse {
   items: Fact[]
+}
+
+// 后端 GET /v1/beliefs 返回结构(app.py:list_beliefs)
+export interface Belief {
+  belief_id: string
+  stance: string
+  claim: string
+  confidence: number
+  about: ActorRef
+  supports: string[]
+}
+
+export interface BeliefsResponse {
+  items: Belief[]
 }
 
 export interface TimelineVersion {
