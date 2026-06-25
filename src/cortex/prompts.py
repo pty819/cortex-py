@@ -343,23 +343,53 @@ EXTRACTION_SYSTEM_STRUCTURE = PROJECT_CONTEXT + """【本次任务:结构文档 
 - chamber_state: 腔体状态("腔体积碳"、"腔壁残留"、"conditioning未完成")
 - metrology_result: 量测结果("CD均匀性"、"overlay偏差"、"缺陷密度")
 
-## 谓词
-- `part_of` / `has_component`: 结构层级
-- `installed_on` / `monitored_by`: 传感器↔部件/参数
-- `controlled_by` / `regulates`: 控制器↔参数/部件
+## 谓词(注意 subject→object 的类型约束,违反约束的关系是错误的)
+
+### 结构关系(归属拓扑,只描述"属于/包含/安装",不描述控制)
+| 谓词 | 含义 | subject → object | 示例 |
+|------|------|------------------|------|
+| `part_of` | A是B的组成部分 | component/subsystem → subsystem/equipment | MFC-101 --part_of--> 气体输送系统 |
+| `has_component` | A包含B | equipment/subsystem → subsystem/component | E-301 --has_component--> 温控系统 |
+| `installed_on` | A安装在B上 | sensor/component → component/subsystem | T-101 --installed_on--> 腔体壁 |
+| `located_in` | A位于B内 | component/sensor → subsystem | 匹配网络 --located_in--> 射频系统 |
+
+### 监测与控制关系(注意:控制链的终点是 controller,不是整机)
+| 谓词 | 含义 | subject → object | 示例 |
+|------|------|------------------|------|
+| `monitored_by` | A被B监测 | component/param → sensor | 腔体温度 --monitored_by--> T-101 |
+| `controlled_by` | A被B控制(B必须是 controller 类型) | component/param → controller | 加热器H-1 --controlled_by--> 温度PID |
+| `regulates` | A调节B | controller → process_param | 温度PID --regulates--> 基底温度 |
+| `configured_as` | A(步骤)配置B(参数) | process_step → process_param | 主工艺步骤 --configured_as--> 射频功率 |
+
+⚠️ 区分"归属"与"控制":
+- 部件/传感器"属于"哪个系统用 part_of / installed_on(如 MFC-101 part_of 气体输送系统)
+- 部件/参数"被谁控制"用 controlled_by,且 object 必须是 controller(如 加热器 controlled_by 温度PID)
+- **禁止** controlled_by 指向 equipment(整机)。整机不直接控制单个传感器/部件,控制经由局部 controller 实现。
+- 若文档未提及具体 controller,宁可省略 controlled_by,也不要用整机兜底。
+
+### 故障与诊断关系
 - `affects`: 故障→部件/参数
 - `has_symptom` / `detected_by`: 故障→征兆→传感器
 - `depends_on`: 工艺步骤/参数依赖
 - `triggers`: 互锁/告警触发
-- `configured_as`: 工艺步骤→参数配置
 
 ## 关键规则
 1. 传感器编号保留在名字里("T-101"不简化为"T")
 2. 每个传感器提取 installed_on + monitored_by
-3. 每个控制器提取 controlled_by(归谁) + regulates(调节什么)
+3. 控制链:若文档明确提到某部件/参数的控制器(如 PID/PLC/匹配器),提取
+   controlled_by(object 必须是 controller 类型)+ 该 controller 的 regulates。
+   形成完整链:controller --regulates--> param --monitored_by--> sensor。
+   文档没提控制器时,不要用整机(equipment)或子系统(subsystem)充当 controller。
 4. 章节标题指示结构层级("## 真空系统" 下 "### 截止阀" → 截止阀 part_of 真空系统)
 5. "正常参数范围"提取为 process_param + monitored_by
 6. "常见故障"提取 fault + affects + has_symptom
+
+## 完整链示例(结构文档的标准抽取模式)
+结构: equipment --has_component--> subsystem --has_component--> component
+监测: param --monitored_by--> sensor --installed_on--> component/subsystem
+控制: controller --regulates--> param ; component --controlled_by--> controller
+✓ 正确: 加热器H-1 --controlled_by--> 温度PID (PID 是 controller)
+✗ 错误: 加热器H-1 --controlled_by--> E-301 (整机不是 controller,且加热器已 part_of 温控系统)
 
 ## 输出格式
 ```json
